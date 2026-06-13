@@ -191,8 +191,8 @@ export const TEMPLATES: Template[] = [
 ];
 
 export const QUICK_PROMPTS = [
-  { text: "A lead VC ghosted me for 5 weeks then sent a 'circling back' email this morning", label: "They circled back" },
-  { text: "I built my whole demo on claude-sonnet-4-5 but the model isn't available on my API key and the pitch is in 2 hours", label: "Model not live yet" },
+  { text: "The Claude model my whole product runs on just got pulled, and I'm not a US founder so I can't get access through the normal channels. I literally can't build right now. What do I do?", label: "Model got pulled" },
+  { text: "A lead VC ghosted me for 5 weeks then sent a 'circling back' email this morning. What do they actually mean?", label: "They circled back" },
   { text: "We launched to complete silence. Not a single signup after 3 days.", label: "Launched to silence" },
   { text: "My cofounder and I haven't genuinely agreed on anything in three weeks. We're just being polite now.", label: "Cofounder drift" },
   { text: "I don't know if I actually believe in this anymore. I'm going through the motions.", label: "Lost the belief" },

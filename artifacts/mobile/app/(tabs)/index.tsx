@@ -50,6 +50,8 @@ import {
   type SavedTake,
 } from "@/lib/storage";
 import CharacterAvatar from "@/components/CharacterAvatar";
+import LogoStar from "@/components/LogoStar";
+import HomeScreen from "@/components/HomeScreen";
 import Sidebar from "@/components/Sidebar";
 import CharacterSheet from "@/components/CharacterSheet";
 
@@ -392,348 +394,6 @@ const mrStyles = StyleSheet.create({
   actionText: { fontSize: 13 },
 });
 
-// ─── Home screen — personalized empty state ───────────────────────────────────
-
-interface HomeScreenProps {
-  userName: string | null;
-  defaultAdvisor: string;
-  onSendPrompt: (text: string) => void;
-  onGreatness: () => void;
-  onDailyPrompt: () => void;
-  onAdvisorChange: (id: string) => void;
-}
-
-function HomeScreen({ userName, defaultAdvisor, onSendPrompt, onGreatness, onDailyPrompt, onAdvisorChange }: HomeScreenProps) {
-  const colors = useColors();
-  const [selectedId, setSelectedId] = useState(defaultAdvisor);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropAnim = useRef(new Animated.Value(0)).current;
-  const advisorFade = useRef(new Animated.Value(1)).current;
-
-  // Sync when parent loads stored advisor from AsyncStorage
-  useEffect(() => {
-    setSelectedId(defaultAdvisor);
-  }, [defaultAdvisor]);
-
-  const advisor = CHARACTERS[selectedId] ?? CHARACTERS["paul"]!;
-  const accent = advisor.color;
-  const greeting = getTimeGreeting(userName);
-  const daily = getDailyPrompt();
-  const dailyAdvisor = CHARACTERS[daily.charId] ?? CHARACTERS["paul"]!;
-  const advisorGreeting = ADVISOR_GREETINGS[selectedId] ?? ADVISOR_GREETINGS["paul"]!;
-
-  const toggleDropdown = useCallback(() => {
-    const toValue = dropdownOpen ? 0 : 1;
-    Animated.timing(dropAnim, { toValue, duration: 220, useNativeDriver: false }).start();
-    setDropdownOpen((v) => !v);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-  }, [dropdownOpen, dropAnim]);
-
-  const handleSelectAdvisor = useCallback((id: string) => {
-    Animated.timing(dropAnim, { toValue: 0, duration: 160, useNativeDriver: false }).start();
-    setDropdownOpen(false);
-    if (id === selectedId) return;
-    Animated.sequence([
-      Animated.timing(advisorFade, { toValue: 0, duration: 120, useNativeDriver: true }),
-      Animated.timing(advisorFade, { toValue: 1, duration: 280, useNativeDriver: true }),
-    ]).start();
-    setSelectedId(id);
-    onAdvisorChange(id);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-  }, [selectedId, dropAnim, advisorFade, onAdvisorChange]);
-
-  const dropdownHeight = dropAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, CHARACTER_IDS.length * 52 + 8],
-  });
-  const dropdownOpacity = dropAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-
-  return (
-    <ScrollView
-      style={{ flex: 1 }}
-      contentContainerStyle={hsStyles.container}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Time greeting */}
-      <FadeSlideIn delay={0}>
-        <Text style={[hsStyles.timeGreeting, { color: colors.dim }]}>{greeting}</Text>
-      </FadeSlideIn>
-
-      {/* Advisor selector dropdown */}
-      <FadeSlideIn delay={60}>
-        <View style={hsStyles.dropdownWrap}>
-          <TouchableOpacity
-            style={[hsStyles.dropdownBtn, { borderColor: `${accent}50`, backgroundColor: `${accent}0A` }]}
-            onPress={toggleDropdown}
-            activeOpacity={0.8}
-          >
-            <Text style={[hsStyles.dropdownBtnLabel, { color: colors.faint }]}>TALKING TO</Text>
-            <View style={hsStyles.dropdownBtnRow}>
-              <View style={[hsStyles.advisorDot, { backgroundColor: accent }]} />
-              <Text style={[hsStyles.dropdownBtnName, { color: accent }]}>{advisor.name}</Text>
-              <Text style={[hsStyles.dropdownBtnRole, { color: colors.dim }]}>{advisor.role}</Text>
-              <Feather
-                name={dropdownOpen ? "chevron-up" : "chevron-down"}
-                size={13}
-                color={colors.faint}
-              />
-            </View>
-          </TouchableOpacity>
-
-          <Animated.View
-            style={[
-              hsStyles.dropdownList,
-              { maxHeight: dropdownHeight, opacity: dropdownOpacity, borderColor: `${accent}28` },
-            ]}
-          >
-            <View style={hsStyles.dropdownListInner}>
-              {CHARACTER_IDS.map((id) => {
-                const char = CHARACTERS[id]!;
-                const isSel = id === selectedId;
-                return (
-                  <TouchableOpacity
-                    key={id}
-                    style={[
-                      hsStyles.dropdownItem,
-                      isSel && { backgroundColor: `${char.color}18` },
-                    ]}
-                    onPress={() => handleSelectAdvisor(id)}
-                    activeOpacity={0.75}
-                  >
-                    <View style={[hsStyles.advisorDot, { backgroundColor: char.color }]} />
-                    <Text style={[hsStyles.dropdownItemName, { color: isSel ? char.color : colors.foreground }]}>
-                      {char.name}
-                    </Text>
-                    <Text style={[hsStyles.dropdownItemRole, { color: colors.faint }]}>{char.role}</Text>
-                    {isSel && <Feather name="check" size={12} color={char.color} />}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </Animated.View>
-        </View>
-      </FadeSlideIn>
-
-      {/* Advisor presence — fades when switching */}
-      <Animated.View style={{ opacity: advisorFade }}>
-        <View style={hsStyles.advisorBlock}>
-          <View style={[hsStyles.advisorGlow, { shadowColor: accent }]}>
-            <CharacterAvatar initials={advisor.initials} color={accent} size={64} />
-          </View>
-          <Text style={[hsStyles.advisorGreeting, { color: colors.foreground }]}>
-            "{advisorGreeting}"
-          </Text>
-          <Text style={[hsStyles.advisorName, { color: accent }]}>
-            — {advisor.name}
-          </Text>
-        </View>
-      </Animated.View>
-
-      {/* In pursuit of greatness card */}
-      <TouchableOpacity
-        style={[hsStyles.greatnessCard, { backgroundColor: colors.card, borderColor: `${accent}40` }]}
-        onPress={onGreatness}
-        activeOpacity={0.8}
-      >
-        <Text style={[hsStyles.greatnessStar, { color: accent }]}>✦</Text>
-        <Text style={[hsStyles.greatnessText, { color: colors.foreground }]}>In pursuit of greatness</Text>
-      </TouchableOpacity>
-
-      {/* Daily prompt card */}
-      <TouchableOpacity
-        style={[hsStyles.dailyCard, { backgroundColor: colors.card, borderColor: colors.line, borderLeftColor: `${accent}60`, borderLeftWidth: 2 }]}
-        onPress={onDailyPrompt}
-        activeOpacity={0.8}
-      >
-        <View style={hsStyles.dailyHeader}>
-          <Text style={[hsStyles.dailyLabel, { color: colors.faint }]}>TODAY · FROM {dailyAdvisor.name.toUpperCase()}</Text>
-          <Feather name="arrow-right" size={13} color={colors.faint} />
-        </View>
-        <Text style={[hsStyles.dailyText, { color: colors.foreground }]}>
-          "{daily.text}"
-        </Text>
-      </TouchableOpacity>
-
-      {/* Quick prompts */}
-      <View style={hsStyles.chips}>
-        {QUICK_PROMPTS.map((p) => (
-          <TouchableOpacity
-            key={p.label}
-            style={[hsStyles.chip, { backgroundColor: colors.card, borderColor: colors.line }]}
-            onPress={() => onSendPrompt(p.text)}
-            activeOpacity={0.7}
-          >
-            <Text style={[hsStyles.chipText, { color: colors.foreground }]}>{p.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </ScrollView>
-  );
-}
-
-const hsStyles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingBottom: 100,
-    paddingTop: 24,
-    gap: 0,
-  },
-  timeGreeting: {
-    fontSize: 15,
-    fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
-    letterSpacing: 0.3,
-    marginBottom: 20,
-  },
-  // ── Dropdown ────────────────────────────────────────────────────────
-  dropdownWrap: {
-    marginBottom: 28,
-  },
-  dropdownBtn: {
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    gap: 4,
-  },
-  dropdownBtnLabel: {
-    fontSize: 9,
-    fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
-    letterSpacing: 1.4,
-    marginBottom: 2,
-  },
-  dropdownBtnRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  advisorDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  dropdownBtnName: {
-    fontSize: 15,
-    fontWeight: "600",
-    letterSpacing: -0.2,
-  },
-  dropdownBtnRole: {
-    fontSize: 12,
-    flex: 1,
-  },
-  dropdownList: {
-    overflow: "hidden",
-    borderWidth: 1,
-    borderTopWidth: 0,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-    marginTop: -2,
-  },
-  dropdownListInner: {
-    paddingTop: 4,
-    paddingBottom: 4,
-  },
-  dropdownItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    gap: 10,
-  },
-  dropdownItemName: {
-    fontSize: 14,
-    fontWeight: "500",
-    minWidth: 50,
-  },
-  dropdownItemRole: {
-    fontSize: 12,
-    flex: 1,
-  },
-  // ── Advisor presence ────────────────────────────────────────────────
-  advisorBlock: {
-    alignItems: "center",
-    marginBottom: 28,
-    gap: 14,
-  },
-  advisorGlow: {
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    elevation: 0,
-  },
-  advisorGreeting: {
-    fontSize: 22,
-    fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
-    fontStyle: "italic",
-    textAlign: "center",
-    lineHeight: 32,
-    letterSpacing: -0.3,
-    maxWidth: 300,
-  },
-  advisorName: {
-    fontSize: 12,
-    fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
-    letterSpacing: 0.5,
-  },
-  // ── Cards ────────────────────────────────────────────────────────────
-  greatnessCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    paddingVertical: 18,
-    paddingHorizontal: 20,
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 16,
-  },
-  greatnessStar: {
-    fontSize: 22,
-    lineHeight: 26,
-  },
-  greatnessText: {
-    fontSize: 17,
-    fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
-    fontStyle: "italic",
-    letterSpacing: -0.2,
-  },
-  dailyCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 18,
-    marginBottom: 24,
-    gap: 10,
-  },
-  dailyHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  dailyLabel: {
-    fontSize: 9,
-    fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
-    letterSpacing: 1.2,
-  },
-  dailyText: {
-    fontSize: 16,
-    fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
-    fontStyle: "italic",
-    lineHeight: 24,
-    letterSpacing: -0.2,
-  },
-  chips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  chip: {
-    borderWidth: 1,
-    borderRadius: 20,
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-  },
-  chipText: { fontSize: 12.5 },
-});
-
 // ─── Main chat screen ─────────────────────────────────────────────────────────
 
 export default function ChatScreen() {
@@ -994,8 +654,21 @@ export default function ChatScreen() {
   const handleAdvisorChange = useCallback((id: string) => {
     setDefaultAdvisor(id);
     setSelectedCharId(id);
+    setIsBoardMode(false);
     currentCharIdRef.current = id;
     AsyncStorage.setItem("costar_default_advisor", id).catch(() => {});
+  }, []);
+
+  const handleSelectAuto = useCallback(() => {
+    setSelectedCharId("auto");
+    setIsBoardMode(false);
+    currentCharIdRef.current = "auto";
+  }, []);
+
+  const handleSelectCouncil = useCallback(() => {
+    setIsBoardMode(true);
+    setSelectedCharId("auto");
+    currentCharIdRef.current = "board";
   }, []);
 
   const handleGreatness = useCallback(() => {
@@ -1055,6 +728,9 @@ export default function ChatScreen() {
     ? null
     : CHARACTERS[selectedCharId === "auto" ? (currentCharIdRef.current || "paul") : selectedCharId];
 
+  const singleActive = !isBoardMode && selectedCharId !== "auto";
+  const accent = singleActive ? CHARACTERS[selectedCharId]?.color ?? colors.saber : colors.saber;
+
   const styles = makeStyles(colors, topPad, bottomPad);
 
   return (
@@ -1084,7 +760,7 @@ export default function ChatScreen() {
               <LiveDot active={isProcessing} color={colors.saber} />
             </>
           ) : (
-            <Text style={[styles.headerTitle, { color: colors.saber }]}>✦ Co-Star</Text>
+            <LogoStar size={26} color={colors.saber} />
           )}
         </View>
 
@@ -1098,11 +774,13 @@ export default function ChatScreen() {
         {!started ? (
           <HomeScreen
             userName={userName}
-            defaultAdvisor={defaultAdvisor}
+            selectedCharId={selectedCharId}
+            isBoardMode={isBoardMode}
+            onSelectAuto={handleSelectAuto}
+            onSelectAdvisor={handleAdvisorChange}
+            onSelectCouncil={handleSelectCouncil}
             onSendPrompt={handleSend}
             onGreatness={handleGreatness}
-            onDailyPrompt={handleDailyPrompt}
-            onAdvisorChange={handleAdvisorChange}
           />
         ) : (
           <FlatList
@@ -1162,7 +840,7 @@ export default function ChatScreen() {
             <Pressable style={StyleSheet.absoluteFill} onPress={() => setPlusMenuOpen(false)} />
           )}
 
-          <View style={[styles.composer, { backgroundColor: colors.card, borderColor: colors.line }]}>
+          <View style={[styles.composer, { backgroundColor: colors.card, borderColor: singleActive ? `${accent}55` : colors.line }]}>
             <View style={styles.composerRow1}>
               <TextInput
                 style={[styles.composerInput, { color: colors.foreground }]}
@@ -1214,7 +892,7 @@ export default function ChatScreen() {
 
               <View style={styles.composerRight}>
                 <TouchableOpacity
-                  style={[styles.sendBtn, { backgroundColor: colors.saber }, (!inputText.trim() || isProcessing) && styles.sendBtnDisabled]}
+                  style={[styles.sendBtn, { backgroundColor: accent, shadowColor: accent }, (!inputText.trim() || isProcessing) && styles.sendBtnDisabled]}
                   onPress={() => handleSend()}
                   disabled={!inputText.trim() || isProcessing}
                   activeOpacity={0.85}
