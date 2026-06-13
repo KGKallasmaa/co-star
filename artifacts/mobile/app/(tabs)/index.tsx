@@ -491,12 +491,9 @@ export default function ChatScreen() {
         if (valid && restored) {
           setMode(restored);
           modeRef.current = restored;
-        } else if (advisor) {
-          // First run after onboarding: start themed to the advisor they picked.
-          const m: ChatMode = { kind: "single", id: adv };
-          setMode(m);
-          modeRef.current = m;
         }
+        // No saved mode → default to Auto (the CoStar blend): the hero experience,
+        // and the mode the scripted demo prompts fire in.
       }).catch(() => {});
     }
   }, []);
