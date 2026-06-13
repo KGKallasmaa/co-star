@@ -6,7 +6,11 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "seed-revenuecat": "tsx ./src/seedRevenueCat.ts",
+    "seed-stripe": "tsx ./src/seedStripe.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "stripe": "^22.2.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",

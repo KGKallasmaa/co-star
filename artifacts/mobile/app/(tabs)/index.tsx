@@ -397,11 +397,11 @@ interface HomeScreenProps {
   userName: string | null;
   defaultAdvisor: string;
   onSendPrompt: (text: string) => void;
-  onRoast: () => void;
+  onGreatness: () => void;
   onDailyPrompt: () => void;
 }
 
-function HomeScreen({ userName, defaultAdvisor, onSendPrompt, onRoast, onDailyPrompt }: HomeScreenProps) {
+function HomeScreen({ userName, defaultAdvisor, onSendPrompt, onGreatness, onDailyPrompt }: HomeScreenProps) {
   const colors = useColors();
   const advisor = CHARACTERS[defaultAdvisor] ?? CHARACTERS["paul"]!;
   const greeting = getTimeGreeting(userName);
@@ -436,6 +436,18 @@ function HomeScreen({ userName, defaultAdvisor, onSendPrompt, onRoast, onDailyPr
         </View>
       </FadeSlideIn>
 
+      {/* In pursuit of greatness card */}
+      <FadeSlideIn delay={120}>
+        <TouchableOpacity
+          style={[hsStyles.greatnessCard, { backgroundColor: colors.card, borderColor: "rgba(63,169,245,0.3)" }]}
+          onPress={onGreatness}
+          activeOpacity={0.8}
+        >
+          <Text style={[hsStyles.greatnessStar, { color: colors.saber }]}>✦</Text>
+          <Text style={[hsStyles.greatnessText, { color: colors.foreground }]}>In pursuit of greatness</Text>
+        </TouchableOpacity>
+      </FadeSlideIn>
+
       {/* Daily prompt card */}
       <FadeSlideIn delay={180}>
         <TouchableOpacity
@@ -466,13 +478,6 @@ function HomeScreen({ userName, defaultAdvisor, onSendPrompt, onRoast, onDailyPr
               <Text style={[hsStyles.chipText, { color: colors.foreground }]}>{p.label}</Text>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity
-            style={[hsStyles.chip, hsStyles.chipRoast, { backgroundColor: colors.card, borderColor: "rgba(63,169,245,0.4)" }]}
-            onPress={onRoast}
-            activeOpacity={0.7}
-          >
-            <Text style={[hsStyles.chipText, { color: colors.saber }]}>◈ Roast my VC</Text>
-          </TouchableOpacity>
         </View>
       </FadeSlideIn>
     </ScrollView>
@@ -542,6 +547,25 @@ const hsStyles = StyleSheet.create({
     lineHeight: 24,
     letterSpacing: -0.2,
   },
+  greatnessCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 16,
+  },
+  greatnessStar: {
+    fontSize: 22,
+    lineHeight: 26,
+  },
+  greatnessText: {
+    fontSize: 17,
+    fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
+    fontStyle: "italic",
+    letterSpacing: -0.2,
+  },
   chips: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -553,7 +577,6 @@ const hsStyles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: 14,
   },
-  chipRoast: {},
   chipText: { fontSize: 12.5 },
 });
 
@@ -567,7 +590,6 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState("");
   const [selectedCharId, setSelectedCharId] = useState("auto");
   const [isBoardMode, setIsBoardMode] = useState(false);
-  const [deepResearch, setDeepResearch] = useState(false);
   const [typingCharId, setTypingCharId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -691,7 +713,6 @@ export default function ChatScreen() {
   const streamSingleResponse = useCallback(
     async (charId: string, _userText: string, history: ChatMessage[]) => {
       setTypingCharId(charId);
-      if (deepResearch) await new Promise<void>((r) => setTimeout(r, 600));
 
       const msgId = uid();
       streamingMsgIdRef.current = msgId;
@@ -702,7 +723,6 @@ export default function ChatScreen() {
       await streamChat(
         charId,
         history,
-        deepResearch,
         (chunk) => {
           fullContent += chunk;
           if (!assistantAdded) {
@@ -753,7 +773,7 @@ export default function ChatScreen() {
         }
       );
     },
-    [deepResearch, isBoardMode, persistConversation]
+    [isBoardMode, persistConversation]
   );
 
   const runBoardResponse = useCallback(
@@ -769,23 +789,22 @@ export default function ChatScreen() {
 
   const runSingleAIResponse = useCallback(
     async (charId: string, userText: string, history: ChatMessage[]) => {
-      if (deepResearch) addMessage({ type: "routing", text: `✦ thinking deeper…` });
       await streamSingleResponse(charId, userText, history);
       setIsProcessing(false);
     },
-    [streamSingleResponse, deepResearch, addMessage]
+    [streamSingleResponse]
   );
 
   const runRoastSequence = useCallback(async (history: ChatMessage[]) => {
     setTypingCharId("vc");
-    await new Promise<void>((r) => setTimeout(r, deepResearch ? 2000 : 1000));
+    await new Promise<void>((r) => setTimeout(r, 1000));
     setTypingCharId(null);
     for (let i = 0; i < ROAST_LINES.length; i++) {
       addMessage({ type: "ai", charId: "vc", text: ROAST_LINES[i]! });
       if (i < ROAST_LINES.length - 1) await new Promise<void>((r) => setTimeout(r, 1100));
     }
     setIsProcessing(false);
-  }, [deepResearch, addMessage]);
+  }, [addMessage]);
 
   const handleSend = useCallback(
     (text?: string) => {
@@ -817,6 +836,11 @@ export default function ChatScreen() {
     },
     [inputText, isProcessing, selectedCharId, isBoardMode, addMessage, runBoardResponse, runSingleAIResponse]
   );
+
+  const handleGreatness = useCallback(() => {
+    const prompt = "I'm trying to build something truly great — not just a successful startup, but something that matters. Help me think honestly about whether I'm actually on the right path, or just surviving.";
+    handleSend(prompt);
+  }, [handleSend]);
 
   const handleDailyPrompt = useCallback(() => {
     const daily = getDailyPrompt();
@@ -915,7 +939,7 @@ export default function ChatScreen() {
             userName={userName}
             defaultAdvisor={defaultAdvisor}
             onSendPrompt={handleSend}
-            onRoast={() => handleSelectTemplate("roast")}
+            onGreatness={handleGreatness}
             onDailyPrompt={handleDailyPrompt}
           />
         ) : (
@@ -1027,14 +1051,6 @@ export default function ChatScreen() {
               </View>
 
               <View style={styles.composerRight}>
-                <TouchableOpacity
-                  style={[styles.researchToggle, { backgroundColor: colors.background2, borderColor: deepResearch ? colors.saber : colors.line }]}
-                  onPress={() => setDeepResearch((v) => !v)}
-                  activeOpacity={0.7}
-                >
-                  <Feather name="search" size={13} color={deepResearch ? colors.saber : colors.dim} />
-                  <Text style={[styles.researchText, { color: deepResearch ? colors.saber : colors.dim }]}>deep</Text>
-                </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.sendBtn, { backgroundColor: colors.saber }, (!inputText.trim() || isProcessing) && styles.sendBtnDisabled]}
                   onPress={() => handleSend()}

@@ -78,7 +78,6 @@ const ChatMessageSchema = z.object({
 const ChatRequestSchema = z.object({
   characterId: z.string(),
   messages: z.array(ChatMessageSchema),
-  deepResearch: z.boolean().optional(),
 });
 
 router.post("/chat", async (req, res) => {
@@ -88,15 +87,12 @@ router.post("/chat", async (req, res) => {
     return;
   }
 
-  const { characterId, messages, deepResearch } = parsed.data;
+  const { characterId, messages } = parsed.data;
 
   const systemPrompt =
     CHARACTER_SYSTEMS[characterId] ?? CHARACTER_SYSTEMS["paul"]!;
 
-  const fullSystem = deepResearch
-    ? systemPrompt +
-      "\n\nThe founder has turned on deep thinking mode. Take a beat. Slow down. Give a more considered, specific answer than you normally would — less general, more to the actual situation they're describing."
-    : systemPrompt;
+  const fullSystem = systemPrompt;
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");

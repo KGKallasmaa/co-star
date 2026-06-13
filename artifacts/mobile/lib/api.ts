@@ -16,7 +16,6 @@ export interface ChatMessage {
 export async function streamChat(
   characterId: string,
   messages: ChatMessage[],
-  deepResearch: boolean,
   onChunk: (text: string) => void,
   onDone: () => void,
   onError: (msg: string) => void
@@ -29,7 +28,7 @@ export async function streamChat(
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },
-    body: JSON.stringify({ characterId, messages, deepResearch }),
+    body: JSON.stringify({ characterId, messages }),
   });
 
   if (!response.ok) {
