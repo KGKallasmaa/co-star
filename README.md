@@ -1,5 +1,7 @@
 # Co-Star for Founders
 
+https://costar-companion--karlgustav1789.replit.app/
+
 **An AI coach-council for founders.** Building is lonely. Co-Star gives you a room
 full of advisors with sharp, distinct points of view — talk to one, summon the
 whole council to debate your problem, or let it auto-pick the right voice for what

@@ -335,6 +335,18 @@ function makeStyles(
       marginBottom: 6,
     },
     newChatText: { color: colors.foreground, fontSize: 14, fontWeight: "500" },
+    settingsRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      paddingVertical: 11,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: colors.line,
+      borderRadius: 12,
+      marginTop: 16,
+    },
+    settingsText: { color: colors.dim, fontSize: 14, fontWeight: "500" },
     sectionLabel: {
       color: colors.faint,
       fontSize: 9.5,
