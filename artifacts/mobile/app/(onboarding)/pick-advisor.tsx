@@ -36,7 +36,8 @@ const ADVISOR_QUOTES: Record<string, string> = {
 export default function PickAdvisorScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const [selected, setSelected] = useState<string | null>(null);
+  // Pre-selected so onboarding is tap-tap-Continue; the user can still switch.
+  const [selected, setSelected] = useState<string | null>("paul");
   const fadeIn = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {

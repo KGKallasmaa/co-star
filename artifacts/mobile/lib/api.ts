@@ -1,4 +1,5 @@
 import { fetch } from "expo/fetch";
+import type { FounderProfile } from "./profile";
 
 export function getApiBaseUrl(): string {
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
@@ -13,34 +14,15 @@ export interface ChatMessage {
   content: string;
 }
 
-export async function streamChat(
-  characterId: string,
-  messages: ChatMessage[],
-  onChunk: (text: string) => void,
-  onDone: () => void,
-  onError: (msg: string) => void
+// ── Shared SSE reader ─────────────────────────────────────────────────────────
+// Calls onEvent with each parsed `data:` payload. Return true from onEvent to stop.
+
+async function readSSE(
+  body: ReadableStream<Uint8Array> | null,
+  onEvent: (obj: any) => boolean | void
 ): Promise<void> {
-  const base = getApiBaseUrl();
-
-  const response = await fetch(`${base}chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-    body: JSON.stringify({ characterId, messages }),
-  });
-
-  if (!response.ok) {
-    onError("Failed to connect to advisor.");
-    return;
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) {
-    onError("No response stream.");
-    return;
-  }
+  const reader = body?.getReader();
+  if (!reader) throw new Error("No response stream.");
 
   const decoder = new TextDecoder();
   let buffer = "";
@@ -55,27 +37,139 @@ export async function streamChat(
 
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;
-      const data = line.slice(6);
       try {
-        const parsed = JSON.parse(data) as {
-          content?: string;
-          done?: boolean;
-          error?: string;
-        };
-        if (parsed.error) {
-          onError(parsed.error);
-          return;
-        }
-        if (parsed.done) {
-          onDone();
-          return;
-        }
-        if (parsed.content) {
-          onChunk(parsed.content);
-        }
+        const stop = onEvent(JSON.parse(line.slice(6)));
+        if (stop === true) return;
       } catch {}
     }
   }
+}
 
-  onDone();
+// ── Single advisor ────────────────────────────────────────────────────────────
+
+export async function streamChat(
+  characterId: string,
+  messages: ChatMessage[],
+  onChunk: (text: string) => void,
+  onDone: () => void,
+  onError: (msg: string) => void,
+  profile?: FounderProfile
+): Promise<void> {
+  const base = getApiBaseUrl();
+
+  let response: Response;
+  try {
+    response = (await fetch(`${base}chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({ characterId, messages, profile }),
+    })) as unknown as Response;
+  } catch {
+    onError("Couldn't reach your advisor. Check your connection.");
+    return;
+  }
+
+  if (!response.ok) {
+    onError("Failed to connect to advisor.");
+    return;
+  }
+
+  let settled = false;
+  try {
+    await readSSE(response.body as any, (parsed) => {
+      if (parsed.error) {
+        settled = true;
+        onError(parsed.error);
+        return true;
+      }
+      if (parsed.done) {
+        settled = true;
+        onDone();
+        return true;
+      }
+      if (parsed.content) onChunk(parsed.content);
+    });
+  } catch {
+    if (!settled) onError("The connection dropped mid-thought. Try again.");
+    return;
+  }
+
+  if (!settled) onDone();
+}
+
+// ── The council ───────────────────────────────────────────────────────────────
+
+export interface CouncilHandlers {
+  /** The 2–3 advisors convened, ordered most-qualified first. */
+  onPanel: (advisors: string[], lead: string, reason: string) => void;
+  /** A voice (advisor id, or "council" for the closing synthesis) begins. */
+  onAdvisorStart: (advisorId: string) => void;
+  onDelta: (advisorId: string, text: string) => void;
+  onAdvisorDone: (advisorId: string) => void;
+  onDone: () => void;
+  onError: (msg: string) => void;
+}
+
+export async function streamCouncil(
+  messages: ChatMessage[],
+  profile: FounderProfile | undefined,
+  h: CouncilHandlers
+): Promise<void> {
+  const base = getApiBaseUrl();
+
+  let response: Response;
+  try {
+    response = (await fetch(`${base}council`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({ messages, profile }),
+    })) as unknown as Response;
+  } catch {
+    h.onError("Couldn't reach the council. Check your connection.");
+    return;
+  }
+
+  if (!response.ok) {
+    h.onError("Failed to convene the council.");
+    return;
+  }
+
+  let settled = false;
+  try {
+    await readSSE(response.body as any, (e) => {
+      switch (e.type) {
+        case "panel":
+          h.onPanel(e.advisors ?? [], e.lead ?? "", e.reason ?? "");
+          break;
+        case "advisorStart":
+          h.onAdvisorStart(e.advisorId);
+          break;
+        case "delta":
+          h.onDelta(e.advisorId, e.content ?? "");
+          break;
+        case "advisorDone":
+          h.onAdvisorDone(e.advisorId);
+          break;
+        case "error":
+          settled = true;
+          h.onError(e.message ?? "The council ran into something.");
+          return true;
+        case "done":
+          settled = true;
+          h.onDone();
+          return true;
+      }
+    });
+  } catch {
+    if (!settled) h.onError("The council connection dropped. Try again.");
+    return;
+  }
+
+  if (!settled) h.onDone();
 }

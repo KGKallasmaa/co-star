@@ -11,55 +11,76 @@ export const CHARACTERS: Record<string, Character> = {
   paul: {
     id: "paul",
     name: "Paul",
-    role: "Essayist sage",
+    role: "YC · the essayist",
     initials: "PG",
     color: "#5B8FA8",
-    voice: "Finds the hidden assumption. Never tells you what to do.",
+    voice: "Names the assumption you're hiding from. Won't tell you what to do.",
   },
   garry: {
     id: "garry",
     name: "Garry",
-    role: "The accelerator",
+    role: "YC president",
     initials: "GT",
     color: "#3E9C7A",
-    voice: "Finds the one thread to pull. Warm and direct.",
+    voice: "One thread to pull. Ships you out of your own head.",
   },
   marc: {
     id: "marc",
     name: "Marc",
-    role: "VC · accelerationist",
+    role: "a16z · accelerationist",
     initials: "MA",
     color: "#3FA9F5",
-    voice: "Zooms way out. Contrarian when it counts.",
+    voice: "Zooms out to the wave. Thinks you're playing too small.",
   },
   sam: {
     id: "sam",
     name: "Sam",
-    role: "A founder like you",
+    role: "a founder, in it now",
     initials: "SA",
     color: "#8A93B8",
-    voice: "Pre-seed, in it now. Sits in it with you.",
+    voice: "No advice. Just honest company at 1am.",
   },
   vc: {
     id: "vc",
     name: "The VC",
-    role: "The other side",
+    role: "the other side of the table",
     initials: "VC",
     color: "#7080C8",
-    voice: "Translates what the ghost and 'circling back' actually mean.",
+    voice: "Translates what 'circling back' actually means.",
   },
   elon: {
     id: "elon",
     name: "Elon",
-    role: "First-principles max",
+    role: "first principles, max",
     initials: "EL",
     color: "#78828F",
-    voice: "Two sentences. Finds the constraint. No softening.",
+    voice: "Two sentences. Deletes the requirement. No softening.",
+  },
+  // The blended default voice (Auto). Therapist + co-founder in one: comfort,
+  // one concrete move, and a question back. Not in CHARACTER_IDS — it IS Auto.
+  costar: {
+    id: "costar",
+    name: "CoStar",
+    role: "therapist + co-founder in one",
+    initials: "✦",
+    color: "#3FA9F5",
+    voice: "Comfort and a concrete move — then a question back.",
+  },
+  // Pseudo-advisor: only used to render the council's closing synthesis ("the call").
+  // Not part of CHARACTER_IDS, so it never shows up in pickers.
+  council: {
+    id: "council",
+    name: "The Council",
+    role: "the room",
+    initials: "✦",
+    color: "#D9A94C",
+    voice: "Where they land — and what to do first.",
   },
 };
 
 export const CHARACTER_IDS = ["paul", "garry", "marc", "sam", "vc", "elon"];
 export const BOARD_MEMBER_IDS = ["paul", "marc", "sam"];
+export const COUNCIL_ID = "council";
 
 // Short greeting from each advisor when the app opens fresh
 export const ADVISOR_GREETINGS: Record<string, string> = {

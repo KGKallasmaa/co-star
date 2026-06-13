@@ -14,7 +14,6 @@ import {
   Animated,
   Platform,
   Pressable,
-  ScrollView,
   Share,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,18 +26,18 @@ import { StatusBar } from "expo-status-bar";
 import { useColors } from "@/hooks/useColors";
 import {
   CHARACTERS,
-  CHARACTER_IDS,
   BOARD_MEMBER_IDS,
+  COUNCIL_ID,
   ROAST_LINES,
-  BOARD_INTRO,
-  routeCharacter,
-  QUICK_PROMPTS,
   TEMPLATES,
-  ADVISOR_GREETINGS,
-  getDailyPrompt,
-  getTimeGreeting,
 } from "@/constants/characters";
-import { streamChat, type ChatMessage } from "@/lib/api";
+import { matchDemo } from "@/constants/demo";
+import { streamChat, streamCouncil, type ChatMessage } from "@/lib/api";
+import {
+  loadProfile,
+  saveProfile,
+  type FounderProfile,
+} from "@/lib/profile";
 import {
   loadConversations,
   saveConversation,
@@ -54,6 +53,16 @@ import LogoStar from "@/components/LogoStar";
 import HomeScreen from "@/components/HomeScreen";
 import Sidebar from "@/components/Sidebar";
 import CharacterSheet from "@/components/CharacterSheet";
+import SettingsSheet from "@/components/SettingsSheet";
+
+// ─── Mode: one source of truth for who's answering ────────────────────────────
+// auto   → the right voice is picked per message
+// single → locked to one advisor for EVERY message until you change it
+// council→ the most-qualified voices debate, then "the call"
+export type ChatMode =
+  | { kind: "auto" }
+  | { kind: "single"; id: string }
+  | { kind: "council" };
 
 type MessageType = "user" | "ai" | "routing";
 
@@ -285,6 +294,7 @@ function MessageRow({ message, isStreaming, isNew, onSave }: MessageRowProps) {
 
   const char = CHARACTERS[message.charId!];
   if (!char) return null;
+  const isCouncil = message.charId === COUNCIL_ID;
 
   async function handleShare() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -314,8 +324,19 @@ function MessageRow({ message, isStreaming, isNew, onSave }: MessageRowProps) {
       <View style={mrStyles.aiRow}>
         <CharacterAvatar initials={char.initials} color={char.color} size={30} />
         <View style={mrStyles.aiColumn}>
-          <View style={[mrStyles.aiBubble, { backgroundColor: colors.card, borderColor: colors.line, borderLeftColor: char.color }]}>
-            <Text style={[mrStyles.aiName, { color: char.color }]}>{char.name.toUpperCase()}</Text>
+          <View
+            style={[
+              mrStyles.aiBubble,
+              {
+                backgroundColor: isCouncil ? "rgba(217,169,76,0.07)" : colors.card,
+                borderColor: isCouncil ? "rgba(217,169,76,0.35)" : colors.line,
+                borderLeftColor: char.color,
+              },
+            ]}
+          >
+            <Text style={[mrStyles.aiName, { color: char.color }]}>
+              {isCouncil ? "THE CALL" : char.name.toUpperCase()}
+            </Text>
             <AIText text={message.text} color={colors.foreground} isStreaming={isStreaming} />
           </View>
           {menuOpen && (
@@ -402,25 +423,31 @@ export default function ChatScreen() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
-  const [selectedCharId, setSelectedCharId] = useState("auto");
-  const [isBoardMode, setIsBoardMode] = useState(false);
+  const [mode, setMode] = useState<ChatMode>({ kind: "auto" });
   const [typingCharId, setTypingCharId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetTab, setSheetTab] = useState<"characters" | "templates">("characters");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [savedConvs, setSavedConvs] = useState<SavedConv[]>([]);
   const [savedTakes, setSavedTakes] = useState<SavedTake[]>([]);
-  const [userName, setUserName] = useState<string | null>(null);
+  const [profile, setProfile] = useState<FounderProfile>({});
   const [defaultAdvisor, setDefaultAdvisor] = useState("paul");
+  const [councilPanel, setCouncilPanel] = useState<string[]>([]);
 
   const conversationRef = useRef<ChatMessage[]>([]);
   const currentConvIdRef = useRef<string | null>(null);
-  const currentCharIdRef = useRef("auto");
   const streamingMsgIdRef = useRef<string | null>(null);
   const renderedMsgIds = useRef(new Set<string>());
   const initializedRef = useRef(false);
+
+  // Refs mirror state so streaming callbacks never read a stale value.
+  const modeRef = useRef<ChatMode>({ kind: "auto" });
+  const profileRef = useRef<FounderProfile>({});
+  const defaultAdvisorRef = useRef("paul");
+  const lastResponderRef = useRef("paul"); // who answered last in auto mode
 
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
 
@@ -429,18 +456,47 @@ export default function ChatScreen() {
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
 
   useEffect(() => {
+    modeRef.current = mode;
+    AsyncStorage.setItem("costar_mode", JSON.stringify(mode)).catch(() => {});
+  }, [mode]);
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+  useEffect(() => { defaultAdvisorRef.current = defaultAdvisor; }, [defaultAdvisor]);
+
+  useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true;
       Promise.all([
         loadConversations(),
         loadSavedTakes(),
-        AsyncStorage.getItem("costar_user_name"),
+        loadProfile(),
         AsyncStorage.getItem("costar_default_advisor"),
-      ]).then(([convs, takes, name, advisor]) => {
+        AsyncStorage.getItem("costar_mode"),
+      ]).then(([convs, takes, prof, advisor, modeRaw]) => {
         setSavedConvs(convs);
         setSavedTakes(takes);
-        if (name) setUserName(name);
-        if (advisor) setDefaultAdvisor(advisor);
+        setProfile(prof);
+        profileRef.current = prof;
+        const adv = advisor || "paul";
+        setDefaultAdvisor(adv);
+        defaultAdvisorRef.current = adv;
+        lastResponderRef.current = adv;
+
+        let restored: ChatMode | null = null;
+        try { if (modeRaw) restored = JSON.parse(modeRaw) as ChatMode; } catch {}
+        const valid =
+          restored &&
+          ((restored.kind === "single" && !!restored.id) ||
+            restored.kind === "auto" ||
+            restored.kind === "council");
+        if (valid && restored) {
+          setMode(restored);
+          modeRef.current = restored;
+        } else if (advisor) {
+          // First run after onboarding: start themed to the advisor they picked.
+          const m: ChatMode = { kind: "single", id: adv };
+          setMode(m);
+          modeRef.current = m;
+        }
       }).catch(() => {});
     }
   }, []);
@@ -474,34 +530,43 @@ export default function ChatScreen() {
     return full;
   }, []);
 
-  const resetChat = useCallback(() => {
+  // Reset the conversation. Passing no mode KEEPS the current one (stickiness).
+  const resetChat = useCallback((nextMode?: ChatMode) => {
     setMessages([]);
     setInputText("");
-    setSelectedCharId("auto");
-    setIsBoardMode(false);
     setTypingCharId(null);
     setIsProcessing(false);
     setPlusMenuOpen(false);
     setStreamingMsgId(null);
+    setCouncilPanel([]);
     conversationRef.current = [];
     currentConvIdRef.current = null;
     streamingMsgIdRef.current = null;
     renderedMsgIds.current.clear();
+    if (nextMode) {
+      setMode(nextMode);
+      modeRef.current = nextMode;
+    }
   }, []);
 
   const loadConv = useCallback((conv: SavedConv) => {
     currentConvIdRef.current = conv.id;
     conversationRef.current = conv.history;
-    currentCharIdRef.current = conv.charId;
     renderedMsgIds.current.clear();
-    // Mark all loaded messages as already-rendered (no entrance animation)
     conv.messages.forEach((m) => renderedMsgIds.current.add(m.id));
     setMessages(conv.messages as Message[]);
-    setIsBoardMode(conv.boardMode);
-    setSelectedCharId(conv.boardMode ? "auto" : conv.charId);
+    const nextMode: ChatMode = conv.boardMode
+      ? { kind: "council" }
+      : conv.charId && conv.charId !== "auto"
+        ? { kind: "single", id: conv.charId }
+        : { kind: "auto" };
+    setMode(nextMode);
+    modeRef.current = nextMode;
+    if (nextMode.kind === "single") lastResponderRef.current = nextMode.id;
     setIsProcessing(false);
     setTypingCharId(null);
     setStreamingMsgId(null);
+    setCouncilPanel([]);
   }, []);
 
   const handleDeleteConv = useCallback((id: string) => {
@@ -541,7 +606,7 @@ export default function ChatScreen() {
           fullContent += chunk;
           if (!assistantAdded) {
             setTypingCharId(null);
-            renderedMsgIds.current.add(msgId); // streaming msg: no entrance anim
+            renderedMsgIds.current.add(msgId);
             setMessages((prev) => [
               { id: msgId, type: "ai", charId, text: fullContent, timestamp: Date.now() },
               ...prev,
@@ -572,7 +637,7 @@ export default function ChatScreen() {
           ];
           conversationRef.current = newHistory;
           setMessages((prev) => {
-            persistConversation(prev, newHistory, currentCharIdRef.current, isBoardMode);
+            persistConversation(prev, newHistory, charId, false);
             return prev;
           });
         },
@@ -584,21 +649,11 @@ export default function ChatScreen() {
             { id: msgId, type: "ai", charId, text: errMsg, timestamp: Date.now() },
             ...prev,
           ]);
-        }
+        },
+        profileRef.current
       );
     },
-    [isBoardMode, persistConversation]
-  );
-
-  const runBoardResponse = useCallback(
-    async (userText: string, history: ChatMessage[]) => {
-      for (const charId of ["paul", "sam", "marc"] as const) {
-        await streamSingleResponse(charId, userText, history);
-        await new Promise<void>((r) => setTimeout(r, 200));
-      }
-      setIsProcessing(false);
-    },
-    [streamSingleResponse]
+    [persistConversation]
   );
 
   const runSingleAIResponse = useCallback(
@@ -609,7 +664,95 @@ export default function ChatScreen() {
     [streamSingleResponse]
   );
 
-  const runRoastSequence = useCallback(async (history: ChatMessage[]) => {
+  // The council: most-qualified voices debate, then "the call".
+  const runCouncilResponse = useCallback(
+    async (history: ChatMessage[]) => {
+      const takes: { id: string; text: string }[] = [];
+      let segId: string | null = null;
+      let segChar: string | null = null;
+      let segText = "";
+      let segAdded = false;
+
+      const startSeg = (advisorId: string) => {
+        if (segChar) takes.push({ id: segChar, text: segText });
+        segChar = advisorId;
+        segId = uid();
+        segText = "";
+        segAdded = false;
+        setTypingCharId(advisorId);
+      };
+      const pushDelta = (text: string) => {
+        if (!segId) return;
+        segText += text;
+        const id = segId;
+        const ch = segChar!;
+        const txt = segText;
+        if (!segAdded) {
+          setTypingCharId(null);
+          renderedMsgIds.current.add(id);
+          streamingMsgIdRef.current = id;
+          setStreamingMsgId(id);
+          setMessages((prev) => [
+            { id, type: "ai", charId: ch, text: txt, timestamp: Date.now() },
+            ...prev,
+          ]);
+          segAdded = true;
+        } else {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const idx = updated.findIndex((m) => m.id === id);
+            if (idx !== -1) updated[idx] = { ...updated[idx]!, text: txt };
+            return updated;
+          });
+        }
+      };
+
+      await streamCouncil(history, profileRef.current, {
+        onPanel: (advisors) => {
+          setCouncilPanel(advisors);
+          const names = advisors.map((id) => CHARACTERS[id]?.name ?? id).join(" · ");
+          addMessage({ type: "routing", text: `✦ the council convenes · ${names}` });
+        },
+        onAdvisorStart: (advisorId) => startSeg(advisorId),
+        onDelta: (_id, text) => pushDelta(text),
+        onAdvisorDone: () => {
+          streamingMsgIdRef.current = null;
+          setStreamingMsgId(null);
+        },
+        onError: (msg) => {
+          setTypingCharId(null);
+          streamingMsgIdRef.current = null;
+          setStreamingMsgId(null);
+          if (segChar && segText) takes.push({ id: segChar, text: segText });
+          segChar = null;
+          addMessage({ type: "ai", charId: COUNCIL_ID, text: msg });
+        },
+        onDone: () => {
+          setTypingCharId(null);
+          streamingMsgIdRef.current = null;
+          setStreamingMsgId(null);
+          if (segChar) { takes.push({ id: segChar, text: segText }); segChar = null; }
+          const summary = takes
+            .filter((t) => t.text.trim())
+            .map((t) => `${CHARACTERS[t.id]?.name ?? t.id}: ${t.text.trim()}`)
+            .join("\n\n");
+          const newHistory: ChatMessage[] = [
+            ...history,
+            { role: "assistant", content: summary || "(the council weighed in)" },
+          ];
+          conversationRef.current = newHistory;
+          setMessages((prev) => {
+            persistConversation(prev, newHistory, COUNCIL_ID, true);
+            return prev;
+          });
+        },
+      });
+      setIsProcessing(false);
+    },
+    [addMessage, persistConversation]
+  );
+
+  const runRoastSequence = useCallback(async (_history: ChatMessage[]) => {
     setTypingCharId("vc");
     await new Promise<void>((r) => setTimeout(r, 1000));
     setTypingCharId(null);
@@ -619,6 +762,53 @@ export default function ChatScreen() {
     }
     setIsProcessing(false);
   }, [addMessage]);
+
+  // Bulletproof demo: stream a crafted reply locally (no API) for the featured
+  // hero prompts, so the stage moment always lands even if the network doesn't.
+  const playScripted = useCallback(
+    async (charId: string, text: string, history: ChatMessage[]) => {
+      setTypingCharId(charId);
+      await new Promise<void>((r) => setTimeout(r, 750));
+      setTypingCharId(null);
+
+      const msgId = uid();
+      renderedMsgIds.current.add(msgId);
+      streamingMsgIdRef.current = msgId;
+      setStreamingMsgId(msgId);
+      setMessages((prev) => [
+        { id: msgId, type: "ai", charId, text: "", timestamp: Date.now() },
+        ...prev,
+      ]);
+
+      const tokens = text.split(/(\s+)/); // keep whitespace tokens
+      let acc = "";
+      for (let i = 0; i < tokens.length; i++) {
+        acc += tokens[i];
+        const snapshot = acc;
+        setMessages((prev) => {
+          const updated = [...prev];
+          const idx = updated.findIndex((mm) => mm.id === msgId);
+          if (idx !== -1) updated[idx] = { ...updated[idx]!, text: snapshot };
+          return updated;
+        });
+        if (tokens[i]!.trim().length) await new Promise<void>((r) => setTimeout(r, 26));
+      }
+
+      streamingMsgIdRef.current = null;
+      setStreamingMsgId(null);
+      const newHistory: ChatMessage[] = [
+        ...history,
+        { role: "assistant", content: text },
+      ];
+      conversationRef.current = newHistory;
+      setMessages((prev) => {
+        persistConversation(prev, newHistory, charId, false);
+        return prev;
+      });
+      setIsProcessing(false);
+    },
+    [persistConversation]
+  );
 
   const handleSend = useCallback(
     (text?: string) => {
@@ -638,81 +828,84 @@ export default function ChatScreen() {
         { role: "user", content: msg },
       ];
 
-      if (isBoardMode) { runBoardResponse(msg, history); return; }
+      const m = modeRef.current;
+      if (m.kind === "council") { runCouncilResponse(history); return; }
 
-      let responder = selectedCharId;
-      if (selectedCharId === "auto") {
-        responder = routeCharacter(msg);
-        addMessage({ type: "routing", text: `✦ brought in ${CHARACTERS[responder]?.name ?? responder}` });
+      if (m.kind === "auto") {
+        // Auto IS CoStar — the blended therapist + co-founder voice.
+        const demo = matchDemo(msg);
+        if (demo) {
+          lastResponderRef.current = demo.reply.charId;
+          playScripted(demo.reply.charId, demo.reply.text, history);
+          return;
+        }
+        lastResponderRef.current = "costar";
+        runSingleAIResponse("costar", msg, history);
+        return;
       }
-      currentCharIdRef.current = responder;
-      runSingleAIResponse(responder, msg, history);
+
+      // single — locked to this advisor for EVERY message until changed
+      lastResponderRef.current = m.id;
+      runSingleAIResponse(m.id, msg, history);
     },
-    [inputText, isProcessing, selectedCharId, isBoardMode, addMessage, runBoardResponse, runSingleAIResponse]
+    [inputText, isProcessing, addMessage, runCouncilResponse, runSingleAIResponse, playScripted]
   );
 
-  const handleAdvisorChange = useCallback((id: string) => {
+  // ── Mode handlers ──
+  const setSingle = useCallback((id: string) => {
+    setMode({ kind: "single", id });
+    modeRef.current = { kind: "single", id };
     setDefaultAdvisor(id);
-    setSelectedCharId(id);
-    setIsBoardMode(false);
-    currentCharIdRef.current = id;
+    defaultAdvisorRef.current = id;
+    lastResponderRef.current = id;
     AsyncStorage.setItem("costar_default_advisor", id).catch(() => {});
   }, []);
 
+  const handlePickCharacter = useCallback((id: string) => {
+    if (id === "auto") {
+      setMode({ kind: "auto" });
+      modeRef.current = { kind: "auto" };
+    } else {
+      setSingle(id);
+    }
+  }, [setSingle]);
+
   const handleSelectAuto = useCallback(() => {
-    setSelectedCharId("auto");
-    setIsBoardMode(false);
-    currentCharIdRef.current = "auto";
+    setMode({ kind: "auto" });
+    modeRef.current = { kind: "auto" };
   }, []);
+
+  const handleSelectSingle = useCallback(() => {
+    setSingle(defaultAdvisorRef.current);
+  }, [setSingle]);
 
   const handleSelectCouncil = useCallback(() => {
-    setIsBoardMode(true);
-    setSelectedCharId("auto");
-    currentCharIdRef.current = "board";
+    setMode({ kind: "council" });
+    modeRef.current = { kind: "council" };
+    setCouncilPanel([]);
   }, []);
 
+  const openCouncil = useCallback(() => {
+    resetChat({ kind: "council" });
+  }, [resetChat]);
+
   const handleGreatness = useCallback(() => {
-    const prompt = "I'm trying to build something truly great — not just a successful startup, but something that matters. Help me think honestly about whether I'm actually on the right path, or just surviving.";
+    const prompt = "I'm trying to build something that actually matters — not just a startup that exits, but something great. Be honest with me: am I on the path, or just surviving and calling it progress?";
     handleSend(prompt);
   }, [handleSend]);
-
-  const handleDailyPrompt = useCallback(() => {
-    const daily = getDailyPrompt();
-    const advisor = CHARACTERS[daily.charId];
-    if (advisor) {
-      setSelectedCharId(daily.charId);
-      currentCharIdRef.current = daily.charId;
-      setIsBoardMode(false);
-    }
-    handleSend(daily.text);
-  }, [handleSend]);
-
-  const openBoard = useCallback(() => {
-    setIsBoardMode(true);
-    setSelectedCharId("auto");
-    setMessages([]);
-    setIsProcessing(true);
-    conversationRef.current = [];
-    currentConvIdRef.current = convId();
-    currentCharIdRef.current = "board";
-    renderedMsgIds.current.clear();
-    BOARD_INTRO.forEach((item, i) => {
-      setTimeout(() => {
-        addMessage({ type: "ai", charId: item.charId, text: item.text });
-        if (i === BOARD_INTRO.length - 1) setIsProcessing(false);
-      }, i * 900);
-    });
-  }, [addMessage]);
 
   const handleSelectTemplate = useCallback(
     (templateId: string) => {
       const tpl = TEMPLATES.find((t) => t.id === templateId);
       if (!tpl) return;
-      if (tpl.characterId === "board") { openBoard(); return; }
-      setSelectedCharId(tpl.characterId);
-      setIsBoardMode(false);
-      currentCharIdRef.current = tpl.characterId;
+      if (tpl.characterId === "board") {
+        openCouncil();
+        setInputText(tpl.prompt);
+        return;
+      }
+      setSingle(tpl.characterId);
       if (tpl.id === "roast") {
+        if (!currentConvIdRef.current) currentConvIdRef.current = convId();
         addMessage({ type: "user", text: tpl.prompt });
         setIsProcessing(true);
         runRoastSequence([{ role: "user", content: tpl.prompt }]);
@@ -720,16 +913,23 @@ export default function ChatScreen() {
       }
       setInputText(tpl.prompt);
     },
-    [openBoard, addMessage, runRoastSequence]
+    [openCouncil, setSingle, addMessage, runRoastSequence]
   );
 
-  // Derive active advisor for header display
-  const activeAdvisor = isBoardMode
-    ? null
-    : CHARACTERS[selectedCharId === "auto" ? (currentCharIdRef.current || "paul") : selectedCharId];
+  const handleSaveProfile = useCallback((p: FounderProfile) => {
+    setProfile(p);
+    profileRef.current = p;
+    saveProfile(p);
+  }, []);
 
-  const singleActive = !isBoardMode && selectedCharId !== "auto";
-  const accent = singleActive ? CHARACTERS[selectedCharId]?.color ?? colors.saber : colors.saber;
+  // ── Derived view state ──
+  const accent =
+    mode.kind === "single" ? (CHARACTERS[mode.id]?.color ?? colors.saber) : colors.saber;
+  const singleActive = mode.kind === "single";
+  const headerAdvisorId =
+    mode.kind === "single" ? mode.id : mode.kind === "auto" ? lastResponderRef.current : null;
+  const headerAdvisor = headerAdvisorId ? CHARACTERS[headerAdvisorId] : null;
+  const headerCouncil = councilPanel.length ? councilPanel : BOARD_MEMBER_IDS;
 
   const styles = makeStyles(colors, topPad, bottomPad);
 
@@ -748,23 +948,34 @@ export default function ChatScreen() {
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
-          {started && !isBoardMode && activeAdvisor ? (
+          {started && mode.kind === "council" ? (
             <>
-              <CharacterAvatar initials={activeAdvisor.initials} color={activeAdvisor.color} size={26} />
-              <Text style={[styles.headerAdvisorName, { color: colors.foreground }]}>{activeAdvisor.name}</Text>
+              <View style={styles.headerStack}>
+                {headerCouncil.slice(0, 3).map((id, i) => (
+                  <View key={id} style={i > 0 ? styles.headerStackOverlap : undefined}>
+                    <CharacterAvatar
+                      initials={CHARACTERS[id]?.initials ?? "?"}
+                      color={CHARACTERS[id]?.color ?? "#555"}
+                      size={24}
+                    />
+                  </View>
+                ))}
+              </View>
+              <Text style={[styles.headerAdvisorName, { color: colors.foreground }]}>The Council</Text>
               <LiveDot active={isProcessing} color={colors.saber} />
             </>
-          ) : started && isBoardMode ? (
+          ) : started && headerAdvisor ? (
             <>
-              <Text style={[styles.headerTitle, { color: colors.dim }]}>The Board</Text>
-              <LiveDot active={isProcessing} color={colors.saber} />
+              <CharacterAvatar initials={headerAdvisor.initials} color={headerAdvisor.color} size={26} />
+              <Text style={[styles.headerAdvisorName, { color: colors.foreground }]}>{headerAdvisor.name}</Text>
+              <LiveDot active={isProcessing} color={headerAdvisor.color} />
             </>
           ) : (
             <LogoStar size={26} color={colors.saber} />
           )}
         </View>
 
-        <TouchableOpacity style={styles.iconBtn} onPress={resetChat} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.iconBtn} onPress={() => resetChat()} activeOpacity={0.7}>
           <Feather name="edit-2" size={19} color={colors.dim} />
         </TouchableOpacity>
       </View>
@@ -773,11 +984,12 @@ export default function ChatScreen() {
       <KeyboardAvoidingView behavior="padding" style={styles.flex} keyboardVerticalOffset={0}>
         {!started ? (
           <HomeScreen
-            userName={userName}
-            selectedCharId={selectedCharId}
-            isBoardMode={isBoardMode}
+            profile={profile}
+            mode={mode}
+            defaultAdvisorId={defaultAdvisor}
             onSelectAuto={handleSelectAuto}
-            onSelectAdvisor={handleAdvisorChange}
+            onSelectSingle={handleSelectSingle}
+            onSelectAdvisor={handlePickCharacter}
             onSelectCouncil={handleSelectCouncil}
             onSendPrompt={handleSend}
             onGreatness={handleGreatness}
@@ -828,11 +1040,11 @@ export default function ChatScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.plusMenuItem}
-                onPress={() => { setPlusMenuOpen(false); openBoard(); }}
+                onPress={() => { setPlusMenuOpen(false); openCouncil(); }}
                 activeOpacity={0.7}
               >
                 <Feather name="message-circle" size={19} color={colors.dim} />
-                <Text style={[styles.plusMenuText, { color: colors.foreground }]}>Talk to the board</Text>
+                <Text style={[styles.plusMenuText, { color: colors.foreground }]}>Summon the council</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -845,7 +1057,13 @@ export default function ChatScreen() {
               <TextInput
                 style={[styles.composerInput, { color: colors.foreground }]}
                 multiline
-                placeholder="What's on your mind?"
+                placeholder={
+                  mode.kind === "council"
+                    ? "Put something on the table…"
+                    : mode.kind === "single"
+                      ? `What's on your mind, for ${CHARACTERS[mode.id]?.name ?? "them"}?`
+                      : "What's on your mind?"
+                }
                 placeholderTextColor={colors.faint}
                 value={inputText}
                 onChangeText={setInputText}
@@ -868,23 +1086,23 @@ export default function ChatScreen() {
                   onPress={() => { setSheetTab("characters"); setSheetOpen(true); }}
                   activeOpacity={0.7}
                 >
-                  {isBoardMode ? (
+                  {mode.kind === "council" ? (
                     <View style={[styles.autoIcon, { backgroundColor: "rgba(63,169,245,0.2)" }]}>
                       <Text style={[styles.autoIconText, { color: colors.saber }]}>◈</Text>
                     </View>
-                  ) : selectedCharId === "auto" ? (
+                  ) : mode.kind === "auto" ? (
                     <View style={[styles.autoIcon, { backgroundColor: colors.saber }]}>
                       <Text style={[styles.autoIconText, { color: "#04111f" }]}>✦</Text>
                     </View>
                   ) : (
                     <CharacterAvatar
-                      initials={CHARACTERS[selectedCharId]?.initials ?? "?"}
-                      color={CHARACTERS[selectedCharId]?.color ?? "#555"}
+                      initials={CHARACTERS[mode.id]?.initials ?? "?"}
+                      color={CHARACTERS[mode.id]?.color ?? "#555"}
                       size={20}
                     />
                   )}
                   <Text style={[styles.charPickerName, { color: colors.foreground }]}>
-                    {isBoardMode ? "The Board" : selectedCharId === "auto" ? "Auto" : CHARACTERS[selectedCharId]?.name ?? ""}
+                    {mode.kind === "council" ? "The Council" : mode.kind === "auto" ? "Auto" : CHARACTERS[mode.id]?.name ?? ""}
                   </Text>
                   <Text style={[styles.charPickerChevron, { color: colors.faint }]}>▾</Text>
                 </TouchableOpacity>
@@ -912,9 +1130,10 @@ export default function ChatScreen() {
       <Sidebar
         visible={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        onNewChat={resetChat}
-        onSelectCharacter={(id) => { setSelectedCharId(id); setIsBoardMode(false); currentCharIdRef.current = id; }}
-        onOpenBoard={openBoard}
+        onNewChat={() => resetChat()}
+        onSelectCharacter={handlePickCharacter}
+        onOpenBoard={openCouncil}
+        onOpenSettings={() => setSettingsOpen(true)}
         savedConvs={savedConvs}
         savedTakes={savedTakes}
         onLoadConv={loadConv}
@@ -924,12 +1143,21 @@ export default function ChatScreen() {
       <CharacterSheet
         visible={sheetOpen}
         initialTab={sheetTab}
-        selectedCharId={selectedCharId}
-        isBoardMode={isBoardMode}
+        selectedCharId={mode.kind === "single" ? mode.id : "auto"}
+        isBoardMode={mode.kind === "council"}
         onClose={() => setSheetOpen(false)}
-        onSelectCharacter={(id) => { setSelectedCharId(id); setIsBoardMode(false); currentCharIdRef.current = id; }}
-        onSelectBoard={openBoard}
+        onSelectCharacter={handlePickCharacter}
+        onSelectBoard={openCouncil}
         onSelectTemplate={handleSelectTemplate}
+      />
+
+      <SettingsSheet
+        visible={settingsOpen}
+        profile={profile}
+        defaultAdvisorId={defaultAdvisor}
+        onClose={() => setSettingsOpen(false)}
+        onSaveProfile={handleSaveProfile}
+        onPickDefaultAdvisor={(id) => { setDefaultAdvisor(id); AsyncStorage.setItem("costar_default_advisor", id).catch(() => {}); }}
       />
     </View>
   );
@@ -954,6 +1182,8 @@ function makeStyles(
     },
     iconBtn: { width: 34, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center" },
     headerCenter: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1, justifyContent: "center" },
+    headerStack: { flexDirection: "row", alignItems: "center" },
+    headerStackOverlap: { marginLeft: -9 },
     headerAdvisorName: { fontSize: 15, fontWeight: "500" },
     headerTitle: {
       fontSize: 16,
@@ -1006,16 +1236,6 @@ function makeStyles(
     autoIconText: { fontSize: 10, fontWeight: "700" },
     charPickerName: { fontSize: 13, fontWeight: "500" },
     charPickerChevron: { fontSize: 11 },
-    researchToggle: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 5,
-      borderWidth: 1,
-      borderRadius: 16,
-      paddingVertical: 6,
-      paddingHorizontal: 9,
-    },
-    researchText: { fontSize: 9, fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace" },
     sendBtn: {
       width: 38,
       height: 38,

@@ -6,6 +6,7 @@ export default function OnboardingLayout() {
       <Stack.Screen name="welcome" />
       <Stack.Screen name="pick-advisor" />
       <Stack.Screen name="name" />
+      <Stack.Screen name="startup" />
       <Stack.Screen name="paywall" />
     </Stack>
   );

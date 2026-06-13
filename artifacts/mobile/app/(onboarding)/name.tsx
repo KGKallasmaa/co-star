@@ -11,14 +11,14 @@ import {
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/useColors";
+import { patchProfile } from "@/lib/profile";
 
 export default function NameScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const [name, setName] = useState("");
+  const [name, setName] = useState("Karl");
   const fadeIn = useRef(new Animated.Value(0)).current;
   const inputRef = useRef<TextInput>(null);
 
@@ -31,12 +31,12 @@ export default function NameScreen() {
     const trimmed = name.trim();
     if (!trimmed) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    await AsyncStorage.setItem("costar_user_name", trimmed).catch(() => {});
-    router.push("/(onboarding)/paywall");
+    await patchProfile({ name: trimmed });
+    router.push("/(onboarding)/startup");
   }
 
   function handleSkip() {
-    router.push("/(onboarding)/paywall");
+    router.push("/(onboarding)/startup");
   }
 
   return (

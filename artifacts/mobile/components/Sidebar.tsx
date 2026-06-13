@@ -27,6 +27,7 @@ interface SidebarProps {
   onNewChat: () => void;
   onSelectCharacter: (charId: string) => void;
   onOpenBoard: () => void;
+  onOpenSettings: () => void;
   savedConvs: SavedConv[];
   savedTakes: SavedTake[];
   onLoadConv: (conv: SavedConv) => void;
@@ -39,6 +40,7 @@ export default function Sidebar({
   onNewChat,
   onSelectCharacter,
   onOpenBoard,
+  onOpenSettings,
   savedConvs,
   savedTakes,
   onLoadConv,
@@ -226,6 +228,15 @@ export default function Sidebar({
                 </TouchableOpacity>
               );
             })}
+
+            <TouchableOpacity
+              style={styles.settingsRow}
+              onPress={() => { onOpenSettings(); onClose(); }}
+              activeOpacity={0.7}
+            >
+              <Feather name="settings" size={16} color={colors.dim} />
+              <Text style={styles.settingsText}>You & your startup</Text>
+            </TouchableOpacity>
 
             <View style={styles.footer}>
               <Text style={styles.footerText}>Co-Star for Founders</Text>

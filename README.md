@@ -37,6 +37,14 @@ is already wired up there, including the AI keys the advisors need.
 - **iOS:** open the **Camera** app, point it at the QR code, tap the banner.
 - **Android:** open **Expo Go** → **Scan QR code**.
 
+<p align="center">
+  <img src="docs/expo-qr.png" alt="Expo Go QR code — scan to open Co-Star on your phone" width="320">
+</p>
+
+> The QR above is what the Expo dev server shows. The code is regenerated each time
+> the server starts, so scan the live one from your own run — this is just what to
+> look for.
+
 The app loads directly in Expo Go. Both phone and dev server need internet access;
 they do **not** need to be on the same Wi‑Fi (the dev server is tunneled through a
 public Replit domain).
