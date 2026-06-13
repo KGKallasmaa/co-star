@@ -14,7 +14,7 @@ export const CHARACTERS: Record<string, Character> = {
     role: "Essayist sage",
     initials: "PG",
     color: "#5B7A8C",
-    voice: "Calm, first-principles. Dismantles the story you tell yourself.",
+    voice: "Finds the hidden assumption. Never tells you what to do.",
   },
   garry: {
     id: "garry",
@@ -22,7 +22,7 @@ export const CHARACTERS: Record<string, Character> = {
     role: "The accelerator",
     initials: "GT",
     color: "#3E8C7A",
-    voice: "Bias to action. Launch, talk to users, ship.",
+    voice: "Finds the one thread to pull. Warm and direct.",
   },
   marc: {
     id: "marc",
@@ -30,7 +30,7 @@ export const CHARACTERS: Record<string, Character> = {
     role: "VC · accelerationist",
     initials: "MA",
     color: "#3FA9F5",
-    voice: "P(doom) zero. Raise more, move faster.",
+    voice: "Zooms way out. Contrarian when it counts.",
   },
   sam: {
     id: "sam",
@@ -46,7 +46,7 @@ export const CHARACTERS: Record<string, Character> = {
     role: "The other side",
     initials: "VC",
     color: "#5566A8",
-    voice: "What the ghost and 'circling back' actually mean.",
+    voice: "Translates what the ghost and 'circling back' actually mean.",
   },
   elon: {
     id: "elon",
@@ -54,45 +54,12 @@ export const CHARACTERS: Record<string, Character> = {
     role: "First-principles max",
     initials: "EL",
     color: "#6B7280",
-    voice: "Delete the requirement. Deadline is now.",
+    voice: "Two sentences. Finds the constraint. No softening.",
   },
 };
 
 export const CHARACTER_IDS = ["paul", "garry", "marc", "sam", "vc", "elon"];
 export const BOARD_MEMBER_IDS = ["paul", "marc", "sam"];
-
-export const RESPONSES: Record<string, string[]> = {
-  vc: [
-    "A five-week ghost then 'circling back' isn't a no — it's 'you weren't urgent.' Send three lines with one new number since you last spoke. Give them a reason to move this week.",
-    "Term sheets are fiction until they're signed. Keep running, keep optionality. What's your next investor meeting?",
-    "The 'we'd love to stay in touch' email means no. Always. Move on and find people who say yes on call one.",
-  ],
-  paul: [
-    "That silence isn't a verdict — it's information. It means you're not yet the easiest yes in their week. Fixable, and not about your worth.",
-    "The real question isn't what they said. It's what changed in their world that made you less urgent. Find that, and you find your next move.",
-    "Most startup problems are people problems dressed up as strategy problems. Who specifically is the bottleneck here?",
-  ],
-  garry: [
-    "Launched to silence is the most normal thing in startups. Go get ten users on the phone this week. Distribution is the product now.",
-    "Ship faster. The market gives feedback that no advisor ever could. What can you cut to ship in 48 hours?",
-    "You don't need permission to talk to users. Just call them. What did the last five actual users tell you?",
-  ],
-  sam: [
-    "god, the circling-back text. i stared at mine for an hour. you're not crazy for it stinging — you're just tired and alone with it. you're not actually cooked.",
-    "this is the part nobody talks about in the interviews. the waiting, the silence. it's real and it's hard. how long has it been going on?",
-    "you don't have to have the answer right now. sometimes just getting it out of your head is the first step. what's the actual worst case here?",
-  ],
-  marc: [
-    "This is noise. You're closer than the silence makes you feel. Keep the line going up.",
-    "Raise more than you need. The only thing that kills companies faster than running out of money is running out of momentum.",
-    "The tech transition is happening faster than anyone predicted. Are you riding the wave or still debating whether it exists?",
-  ],
-  elon: [
-    "'This investor' is a deletable requirement. Who else?",
-    "What's the constraint? Delete it. What's the next constraint? Delete that too. Repeat until shipped.",
-    "The timeline is now. Every week you wait is a week a competitor doesn't.",
-  ],
-};
 
 export const ROAST_LINES = [
   '"Thesis-driven" means he read one essay and now has opinions on your category. The thesis is vibes.',
@@ -174,34 +141,38 @@ export const TEMPLATES: Template[] = [
 
 export const QUICK_PROMPTS = [
   {
-    text: "A lead VC ghosted me for 5 weeks, then said circling back",
-    label: "A lead ghosted me",
+    text: "A lead VC ghosted me for 5 weeks then sent a 'circling back' email this morning",
+    label: "They circled back",
   },
   {
-    text: "Help me decide: raise now or grind 3 more months?",
-    label: "Help me decide",
+    text: "I built my whole demo on claude-sonnet-4-5 but the model isn't available on my API key and the pitch is in 2 hours",
+    label: "The model isn't live yet",
   },
   {
-    text: "We launched and nobody is using it",
-    label: "No one is using it",
+    text: "We launched to silence. Not a single signup after 3 days.",
+    label: "Launched to silence",
   },
   {
-    text: "My cofounder and I haven't agreed on anything in 3 weeks",
-    label: "Cofounder tension",
+    text: "My cofounder and I haven't genuinely agreed on anything in three weeks. We're just being polite.",
+    label: "Cofounder drift",
+  },
+  {
+    text: "I don't know if I actually believe in this anymore. I'm just going through the motions.",
+    label: "Lost the belief",
   },
 ];
 
 export function routeCharacter(text: string): string {
   const t = text.toLowerCase();
-  if (/ghost|circl|investor|raise|vc|term sheet|valuation|fund|check/.test(t))
+  if (/ghost|circl|investor|raise|vc|term sheet|valuation|fund|check|pitch|deck/.test(t))
     return "vc";
-  if (/cofounder|team|quit|hire|pivot|equity|split|cofound/.test(t))
+  if (/cofounder|team|quit|hire|pivot|equity|split|cofound|disagree|agree/.test(t))
     return "paul";
-  if (/launch|users|pmf|growth|nobody|product|ship|feature|customer/.test(t))
+  if (/launch|users|pmf|growth|nobody|product|ship|feature|customer|signup|silent/.test(t))
     return "garry";
-  if (/spiral|tired|alone|burn|down|can't sleep|stressed|exhausted|failing/.test(t))
+  if (/spiral|tired|alone|burn|down|can't sleep|stressed|exhausted|failing|believe|motions/.test(t))
     return "sam";
-  if (/fast|constraint|deadline|first principles|physics|delete|build/.test(t))
+  if (/fast|constraint|deadline|first principles|physics|delete|build|api|model|available/.test(t))
     return "elon";
   if (/market|tech|ai|future|wave|momentum|category/.test(t)) return "marc";
   return "paul";

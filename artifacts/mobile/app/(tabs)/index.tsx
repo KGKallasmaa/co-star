@@ -15,10 +15,10 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { Feather } from "@expo/vector-icons";
@@ -35,8 +35,15 @@ import {
   TEMPLATES,
 } from "@/constants/characters";
 import { streamChat, type ChatMessage } from "@/lib/api";
+import {
+  loadConversations,
+  saveConversation,
+  deleteConversation,
+  type SavedConv,
+  type SavedMessage,
+} from "@/lib/storage";
 import CharacterAvatar from "@/components/CharacterAvatar";
-import Sidebar, { type RecentChat } from "@/components/Sidebar";
+import Sidebar from "@/components/Sidebar";
 import CharacterSheet from "@/components/CharacterSheet";
 
 type MessageType = "user" | "ai" | "routing";
@@ -55,13 +62,11 @@ function uid() {
   return `msg-${Date.now()}-${_msgCounter}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function relativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60000) return "now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
-  return `${Math.floor(diff / 86400000)}d`;
+function convId() {
+  return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
+
+// ─── Typing indicator ────────────────────────────────────────────────────────
 
 function TypingBubble({ charId }: { charId: string }) {
   const colors = useColors();
@@ -75,49 +80,26 @@ function TypingBubble({ charId }: { charId: string }) {
       Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
-          Animated.timing(dot, {
-            toValue: 1,
-            duration: 280,
-            useNativeDriver: true,
-          }),
-          Animated.timing(dot, {
-            toValue: 0.3,
-            duration: 280,
-            useNativeDriver: true,
-          }),
+          Animated.timing(dot, { toValue: 1, duration: 280, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0.3, duration: 280, useNativeDriver: true }),
           Animated.delay(600 - delay),
         ])
       );
     const a1 = makeLoop(dot1, 0);
     const a2 = makeLoop(dot2, 160);
     const a3 = makeLoop(dot3, 320);
-    a1.start();
-    a2.start();
-    a3.start();
-    return () => {
-      a1.stop();
-      a2.stop();
-      a3.stop();
-    };
+    a1.start(); a2.start(); a3.start();
+    return () => { a1.stop(); a2.stop(); a3.stop(); };
   }, []);
 
   if (!char) return null;
-
   return (
     <View style={tbStyles.row}>
       <CharacterAvatar initials={char.initials} color={char.color} size={30} />
-      <View
-        style={[tbStyles.bubble, { backgroundColor: colors.card, borderColor: colors.line }]}
-      >
+      <View style={[tbStyles.bubble, { backgroundColor: colors.card, borderColor: colors.line }]}>
         <View style={tbStyles.dots}>
           {[dot1, dot2, dot3].map((d, i) => (
-            <Animated.View
-              key={i}
-              style={[
-                tbStyles.dot,
-                { backgroundColor: colors.saber, opacity: d },
-              ]}
-            />
+            <Animated.View key={i} style={[tbStyles.dot, { backgroundColor: colors.saber, opacity: d }]} />
           ))}
         </View>
       </View>
@@ -127,16 +109,12 @@ function TypingBubble({ charId }: { charId: string }) {
 
 const tbStyles = StyleSheet.create({
   row: { flexDirection: "row", gap: 9, paddingHorizontal: 16, paddingVertical: 4, maxWidth: "90%" },
-  bubble: {
-    borderWidth: 1,
-    borderRadius: 15,
-    borderTopLeftRadius: 5,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
+  bubble: { borderWidth: 1, borderRadius: 15, borderTopLeftRadius: 5, paddingHorizontal: 14, paddingVertical: 12 },
   dots: { flexDirection: "row", gap: 4 },
   dot: { width: 6, height: 6, borderRadius: 3 },
 });
+
+// ─── Routing chip ─────────────────────────────────────────────────────────────
 
 function RoutingChip({ text }: { text: string }) {
   const colors = useColors();
@@ -162,99 +140,149 @@ const rcStyles = StyleSheet.create({
   },
 });
 
+// ─── Paragraph renderer ───────────────────────────────────────────────────────
+
+function AIText({ text, color }: { text: string; color: string }) {
+  const paragraphs = text.split(/\n\n+/).filter((p) => p.trim().length > 0);
+  if (paragraphs.length <= 1) {
+    return <Text style={[aiTextStyles.para, { color }]}>{text}</Text>;
+  }
+  return (
+    <View>
+      {paragraphs.map((para, i) => (
+        <Text key={i} style={[aiTextStyles.para, { color }, i > 0 && aiTextStyles.paraGap]}>
+          {para.trim()}
+        </Text>
+      ))}
+    </View>
+  );
+}
+const aiTextStyles = StyleSheet.create({
+  para: {
+    fontSize: 15,
+    lineHeight: 23,
+    fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
+  },
+  paraGap: { marginTop: 11 },
+});
+
+// ─── Message row ──────────────────────────────────────────────────────────────
+
 function MessageRow({ message }: { message: Message }) {
   const colors = useColors();
-  if (message.type === "routing") {
-    return <RoutingChip text={message.text} />;
-  }
+  const [shareVisible, setShareVisible] = useState(false);
+
+  if (message.type === "routing") return <RoutingChip text={message.text} />;
+
   if (message.type === "user") {
     return (
       <View style={mrStyles.userRow}>
         <View style={[mrStyles.userBubble, { backgroundColor: colors.saber }]}>
-          <Text style={[mrStyles.userText, { color: "#04111f" }]}>
-            {message.text}
-          </Text>
+          <Text style={[mrStyles.userText, { color: "#04111f" }]}>{message.text}</Text>
         </View>
       </View>
     );
   }
+
   const char = CHARACTERS[message.charId!];
   if (!char) return null;
+
+  async function handleShare() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const snippet = message.text.length > 220
+      ? message.text.slice(0, 220).trimEnd() + "…"
+      : message.text;
+    await Share.share({
+      message: `"${snippet}"\n\n— ${char!.name}, via Co-Star for Founders`,
+    });
+  }
+
   return (
-    <View style={mrStyles.aiRow}>
+    <Pressable
+      style={mrStyles.aiRow}
+      onLongPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        setShareVisible((v) => !v);
+      }}
+      onPress={() => shareVisible && setShareVisible(false)}
+    >
       <CharacterAvatar initials={char.initials} color={char.color} size={30} />
-      <View
-        style={[
-          mrStyles.aiBubble,
-          { backgroundColor: colors.card, borderColor: colors.line },
-        ]}
-      >
-        <Text
-          style={[
-            mrStyles.aiName,
-            { color: char.color },
-          ]}
-        >
-          {char.name.toUpperCase()}
-        </Text>
-        <Text
-          style={[
-            mrStyles.aiText,
-            { color: colors.foreground },
-          ]}
-        >
-          {message.text}
-        </Text>
+      <View style={mrStyles.aiColumn}>
+        <View style={[mrStyles.aiBubble, { backgroundColor: colors.card, borderColor: colors.line }]}>
+          <Text style={[mrStyles.aiName, { color: char.color }]}>
+            {char.name.toUpperCase()}
+          </Text>
+          <AIText text={message.text} color={colors.foreground} />
+        </View>
+        {shareVisible && (
+          <TouchableOpacity style={[mrStyles.shareBtn, { borderColor: colors.line }]} onPress={handleShare} activeOpacity={0.7}>
+            <Feather name="share" size={11} color={colors.faint} />
+            <Text style={[mrStyles.shareText, { color: colors.faint }]}>Share this take</Text>
+          </TouchableOpacity>
+        )}
       </View>
-    </View>
+    </Pressable>
   );
 }
+
 const mrStyles = StyleSheet.create({
   userRow: {
     alignSelf: "flex-end",
-    maxWidth: "82%",
+    maxWidth: "80%",
     paddingHorizontal: 16,
     paddingVertical: 3,
   },
   userBubble: {
-    borderRadius: 15,
+    borderRadius: 18,
     borderTopRightRadius: 5,
     paddingHorizontal: 14,
     paddingVertical: 11,
   },
   userText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "500",
-    lineHeight: 20,
+    lineHeight: 21,
   },
   aiRow: {
     flexDirection: "row",
     gap: 9,
-    maxWidth: "90%",
-    paddingHorizontal: 16,
+    maxWidth: "92%",
+    paddingHorizontal: 14,
     paddingVertical: 3,
     alignSelf: "flex-start",
   },
+  aiColumn: { flex: 1, gap: 4 },
   aiBubble: {
-    flex: 1,
     borderWidth: 1,
     borderRadius: 15,
     borderTopLeftRadius: 5,
     paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingVertical: 12,
   },
   aiName: {
     fontSize: 9,
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
     fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  aiText: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
+  shareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    alignSelf: "flex-start",
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderRadius: 12,
+    marginLeft: 2,
+  },
+  shareText: {
+    fontSize: 11,
+    fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
   },
 });
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function ChatScreen() {
   const colors = useColors();
@@ -271,8 +299,11 @@ export default function ChatScreen() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetTab, setSheetTab] = useState<"characters" | "templates">("characters");
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
-  const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
+  const [savedConvs, setSavedConvs] = useState<SavedConv[]>([]);
+
   const conversationRef = useRef<ChatMessage[]>([]);
+  const currentConvIdRef = useRef<string | null>(null);
+  const currentCharIdRef = useRef("auto");
   const initializedRef = useRef(false);
 
   const started = messages.length > 0;
@@ -282,30 +313,35 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true;
-      AsyncStorage.getItem("costar_recent_chats")
-        .then((raw) => {
-          if (raw) setRecentChats(JSON.parse(raw) as RecentChat[]);
-        })
-        .catch(() => {});
+      loadConversations().then(setSavedConvs).catch(() => {});
     }
   }, []);
 
-  const saveRecentChat = useCallback(
-    (charId: string, preview: string) => {
-      const chat: RecentChat = {
-        id: uid(),
-        charId,
-        preview,
-        time: relativeTime(Date.now()),
+  // Persist conversation whenever messages change
+  const persistConversation = useCallback(
+    (msgs: Message[], history: ChatMessage[], charId: string, boardMode: boolean) => {
+      if (msgs.length === 0) return;
+      const firstUser = msgs.findLast((m) => m.type === "user");
+      if (!firstUser) return;
+      const convIdVal = currentConvIdRef.current ?? convId();
+      currentConvIdRef.current = convIdVal;
+      const conv: SavedConv = {
+        id: convIdVal,
+        title: firstUser.text.slice(0, 80),
+        charId: charId === "auto" ? "paul" : charId,
+        boardMode,
+        messages: msgs as SavedMessage[],
+        history,
+        ts: Date.now(),
       };
-      const updated = [chat, ...recentChats.slice(0, 4)];
-      setRecentChats(updated);
-      AsyncStorage.setItem("costar_recent_chats", JSON.stringify(updated)).catch(() => {});
+      saveConversation(conv).then(() =>
+        loadConversations().then(setSavedConvs).catch(() => {})
+      );
     },
-    [recentChats]
+    []
   );
 
-  const addMessage = useCallback((msg: Omit<Message, "id" | "timestamp">) => {
+  const addMessage = useCallback((msg: Omit<Message, "id" | "timestamp">): Message => {
     const full: Message = { ...msg, id: uid(), timestamp: Date.now() };
     setMessages((prev) => [full, ...prev]);
     return full;
@@ -320,15 +356,31 @@ export default function ChatScreen() {
     setIsProcessing(false);
     setPlusMenuOpen(false);
     conversationRef.current = [];
+    currentConvIdRef.current = null;
   }, []);
+
+  const loadConv = useCallback((conv: SavedConv) => {
+    currentConvIdRef.current = conv.id;
+    conversationRef.current = conv.history;
+    currentCharIdRef.current = conv.charId;
+    setMessages(conv.messages as Message[]);
+    setIsBoardMode(conv.boardMode);
+    setSelectedCharId(conv.boardMode ? "auto" : conv.charId);
+    setIsProcessing(false);
+    setTypingCharId(null);
+  }, []);
+
+  const handleDeleteConv = useCallback((id: string) => {
+    deleteConversation(id).then(() =>
+      loadConversations().then(setSavedConvs).catch(() => {})
+    );
+    if (currentConvIdRef.current === id) resetChat();
+  }, [resetChat]);
 
   const streamSingleResponse = useCallback(
     async (charId: string, userText: string, history: ChatMessage[]) => {
       setTypingCharId(charId);
-
-      if (deepResearch) {
-        await new Promise<void>((r) => setTimeout(r, 600));
-      }
+      if (deepResearch) await new Promise<void>((r) => setTimeout(r, 600));
 
       const msgId = uid();
       let fullContent = "";
@@ -351,9 +403,7 @@ export default function ChatScreen() {
             setMessages((prev) => {
               const updated = [...prev];
               const idx = updated.findIndex((m) => m.id === msgId);
-              if (idx !== -1) {
-                updated[idx] = { ...updated[idx]!, text: fullContent };
-              }
+              if (idx !== -1) updated[idx] = { ...updated[idx]!, text: fullContent };
               return updated;
             });
           }
@@ -366,10 +416,15 @@ export default function ChatScreen() {
               ...prev,
             ]);
           }
-          conversationRef.current = [
+          const newHistory: ChatMessage[] = [
             ...history,
             { role: "assistant", content: fullContent },
           ];
+          conversationRef.current = newHistory;
+          setMessages((prev) => {
+            persistConversation(prev, newHistory, currentCharIdRef.current, isBoardMode);
+            return prev;
+          });
         },
         (errMsg) => {
           setTypingCharId(null);
@@ -380,7 +435,7 @@ export default function ChatScreen() {
         }
       );
     },
-    [deepResearch]
+    [deepResearch, isBoardMode, persistConversation]
   );
 
   const runBoardResponse = useCallback(
@@ -398,7 +453,7 @@ export default function ChatScreen() {
   const runSingleAIResponse = useCallback(
     async (charId: string, userText: string, history: ChatMessage[]) => {
       if (deepResearch) {
-        addMessage({ type: "routing", text: `✦ Deep research — pulling context & recent data…` });
+        addMessage({ type: "routing", text: `✦ thinking deeper…` });
       }
       await streamSingleResponse(charId, userText, history);
       setIsProcessing(false);
@@ -411,11 +466,8 @@ export default function ChatScreen() {
     await new Promise<void>((r) => setTimeout(r, deepResearch ? 2000 : 1000));
     setTypingCharId(null);
     for (let i = 0; i < ROAST_LINES.length; i++) {
-      const line = ROAST_LINES[i]!;
-      addMessage({ type: "ai", charId: "vc", text: line });
-      if (i < ROAST_LINES.length - 1) {
-        await new Promise<void>((r) => setTimeout(r, 1100));
-      }
+      addMessage({ type: "ai", charId: "vc", text: ROAST_LINES[i]! });
+      if (i < ROAST_LINES.length - 1) await new Promise<void>((r) => setTimeout(r, 1100));
     }
     setIsProcessing(false);
   }, [deepResearch, addMessage]);
@@ -428,6 +480,11 @@ export default function ChatScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       setInputText("");
       setPlusMenuOpen(false);
+
+      if (!currentConvIdRef.current) {
+        currentConvIdRef.current = convId();
+      }
+
       addMessage({ type: "user", text: msg });
       setIsProcessing(true);
 
@@ -436,31 +493,23 @@ export default function ChatScreen() {
         { role: "user", content: msg },
       ];
 
-      let responder = selectedCharId;
       if (isBoardMode) {
         runBoardResponse(msg, history);
         return;
       }
+
+      let responder = selectedCharId;
       if (selectedCharId === "auto") {
         responder = routeCharacter(msg);
         addMessage({
           type: "routing",
-          text: `✦ Auto brought in ${CHARACTERS[responder]?.name ?? responder}`,
+          text: `✦ brought in ${CHARACTERS[responder]?.name ?? responder}`,
         });
       }
+      currentCharIdRef.current = responder;
       runSingleAIResponse(responder, msg, history);
-      saveRecentChat(responder, msg.slice(0, 50));
     },
-    [
-      inputText,
-      isProcessing,
-      selectedCharId,
-      isBoardMode,
-      addMessage,
-      runBoardResponse,
-      runSingleAIResponse,
-      saveRecentChat,
-    ]
+    [inputText, isProcessing, selectedCharId, isBoardMode, addMessage, runBoardResponse, runSingleAIResponse]
   );
 
   const openBoard = useCallback(() => {
@@ -469,6 +518,8 @@ export default function ChatScreen() {
     setMessages([]);
     setIsProcessing(true);
     conversationRef.current = [];
+    currentConvIdRef.current = convId();
+    currentCharIdRef.current = "board";
 
     BOARD_INTRO.forEach((item, i) => {
       setTimeout(() => {
@@ -482,29 +533,22 @@ export default function ChatScreen() {
     (templateId: string) => {
       const tpl = TEMPLATES.find((t) => t.id === templateId);
       if (!tpl) return;
-
-      if (tpl.characterId === "board") {
-        openBoard();
-        return;
-      }
+      if (tpl.characterId === "board") { openBoard(); return; }
 
       setSelectedCharId(tpl.characterId);
       setIsBoardMode(false);
+      currentCharIdRef.current = tpl.characterId;
 
       if (tpl.id === "roast") {
         addMessage({ type: "user", text: tpl.prompt });
         setIsProcessing(true);
-        if (deepResearch) {
-          addMessage({ type: "routing", text: "✦ Deep research — reading their last 200 tweets & portfolio…" });
-        }
         const history: ChatMessage[] = [{ role: "user", content: tpl.prompt }];
         runRoastSequence(history);
         return;
       }
-
       setInputText(tpl.prompt);
     },
-    [openBoard, addMessage, deepResearch, runRoastSequence]
+    [openBoard, addMessage, runRoastSequence]
   );
 
   const styles = makeStyles(colors, topPad, bottomPad);
@@ -519,32 +563,22 @@ export default function ChatScreen() {
     <View style={styles.container}>
       <StatusBar style="light" />
 
+      {/* Top bar */}
       <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.iconBtn}
-          onPress={() => {
-            setPlusMenuOpen(false);
-            setSidebarOpen(true);
-          }}
+          onPress={() => { setPlusMenuOpen(false); setSidebarOpen(true); }}
           activeOpacity={0.7}
         >
           <Feather name="menu" size={21} color={colors.dim} />
         </TouchableOpacity>
-        <Text style={styles.topTitle}>{started ? title : ""}</Text>
-        <TouchableOpacity
-          style={styles.iconBtn}
-          onPress={resetChat}
-          activeOpacity={0.7}
-        >
-          <Feather name="plus" size={21} color={colors.dim} />
+        <Text style={styles.topTitle}>{started ? title : "✦ Co-Star"}</Text>
+        <TouchableOpacity style={styles.iconBtn} onPress={resetChat} activeOpacity={0.7}>
+          <Feather name="edit-2" size={19} color={colors.dim} />
         </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView
-        behavior="padding"
-        style={styles.flex}
-        keyboardVerticalOffset={0}
-      >
+      <KeyboardAvoidingView behavior="padding" style={styles.flex} keyboardVerticalOffset={0}>
         {!started ? (
           <ScrollView
             style={styles.flex}
@@ -552,12 +586,10 @@ export default function ChatScreen() {
             keyboardShouldPersistTaps="handled"
           >
             <Text style={styles.greeting}>
-              <Text style={styles.greetingStar}>✦</Text>
-              {" In pursuit of\ngreatness"}
+              What's actually{"\n"}going on?
             </Text>
             <Text style={styles.greetingSub}>
-              The lonely part of building. Tell us what's actually going on —
-              we'll bring the right voice.
+              Six advisors who get it. No bullet points. No unsolicited advice.
             </Text>
             <View style={styles.chips}>
               {QUICK_PROMPTS.map((p) => (
@@ -575,9 +607,7 @@ export default function ChatScreen() {
                 onPress={() => handleSelectTemplate("roast")}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.chipText, styles.chipRoastText]}>
-                  ◈ Roast my VC
-                </Text>
+                <Text style={[styles.chipText, styles.chipRoastText]}>◈ Roast my VC</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
@@ -587,85 +617,54 @@ export default function ChatScreen() {
             data={messages}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => <MessageRow message={item} />}
-            ListHeaderComponent={
-              typingCharId ? <TypingBubble charId={typingCharId} /> : null
-            }
+            ListHeaderComponent={typingCharId ? <TypingBubble charId={typingCharId} /> : null}
             contentContainerStyle={styles.chatContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           />
         )}
 
+        {/* Composer */}
         <View style={styles.composerWrapper}>
           {plusMenuOpen && (
-            <View
-              style={[
-                styles.plusMenu,
-                { backgroundColor: colors.background2, borderColor: colors.line },
-              ]}
-            >
+            <View style={[styles.plusMenu, { backgroundColor: colors.background2, borderColor: colors.line }]}>
               <TouchableOpacity
                 style={styles.plusMenuItem}
-                onPress={() => {
-                  setPlusMenuOpen(false);
-                  setSheetTab("characters");
-                  setSheetOpen(true);
-                }}
+                onPress={() => { setPlusMenuOpen(false); setSheetTab("characters"); setSheetOpen(true); }}
                 activeOpacity={0.7}
               >
                 <Feather name="users" size={19} color={colors.dim} />
-                <Text style={[styles.plusMenuText, { color: colors.foreground }]}>
-                  Browse characters
-                </Text>
+                <Text style={[styles.plusMenuText, { color: colors.foreground }]}>Browse advisors</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.plusMenuItem}
-                onPress={() => {
-                  setPlusMenuOpen(false);
-                  setSheetTab("templates");
-                  setSheetOpen(true);
-                }}
+                onPress={() => { setPlusMenuOpen(false); setSheetTab("templates"); setSheetOpen(true); }}
                 activeOpacity={0.7}
               >
                 <Feather name="layout" size={19} color={colors.dim} />
-                <Text style={[styles.plusMenuText, { color: colors.foreground }]}>
-                  Templates
-                </Text>
+                <Text style={[styles.plusMenuText, { color: colors.foreground }]}>Templates</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.plusMenuItem}
-                onPress={() => {
-                  setPlusMenuOpen(false);
-                  openBoard();
-                }}
+                onPress={() => { setPlusMenuOpen(false); openBoard(); }}
                 activeOpacity={0.7}
               >
                 <Feather name="message-circle" size={19} color={colors.dim} />
-                <Text style={[styles.plusMenuText, { color: colors.foreground }]}>
-                  Talk to the board
-                </Text>
+                <Text style={[styles.plusMenuText, { color: colors.foreground }]}>Talk to the board</Text>
               </TouchableOpacity>
             </View>
           )}
 
           {plusMenuOpen && (
-            <Pressable
-              style={StyleSheet.absoluteFill}
-              onPress={() => setPlusMenuOpen(false)}
-            />
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => setPlusMenuOpen(false)} />
           )}
 
-          <View
-            style={[
-              styles.composer,
-              { backgroundColor: colors.card, borderColor: colors.line },
-            ]}
-          >
+          <View style={[styles.composer, { backgroundColor: colors.card, borderColor: colors.line }]}>
             <View style={styles.composerRow1}>
               <TextInput
                 style={[styles.composerInput, { color: colors.foreground }]}
                 multiline
-                placeholder="What's on your mind tonight?"
+                placeholder="What's on your mind?"
                 placeholderTextColor={colors.faint}
                 value={inputText}
                 onChangeText={setInputText}
@@ -677,51 +676,24 @@ export default function ChatScreen() {
             <View style={styles.composerRow2}>
               <View style={styles.composerLeft}>
                 <TouchableOpacity
-                  style={[
-                    styles.plusBtn,
-                    {
-                      backgroundColor: colors.background2,
-                      borderColor: colors.line,
-                    },
-                  ]}
+                  style={[styles.plusBtn, { backgroundColor: colors.background2, borderColor: colors.line }]}
                   onPress={() => setPlusMenuOpen((v) => !v)}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.plusBtnText, { color: colors.dim }]}>
-                    +
-                  </Text>
+                  <Feather name="plus" size={16} color={colors.dim} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[
-                    styles.charPicker,
-                    {
-                      backgroundColor: colors.background2,
-                      borderColor: colors.line,
-                    },
-                  ]}
-                  onPress={() => {
-                    setSheetTab("characters");
-                    setSheetOpen(true);
-                  }}
+                  style={[styles.charPicker, { backgroundColor: colors.background2, borderColor: colors.line }]}
+                  onPress={() => { setSheetTab("characters"); setSheetOpen(true); }}
                   activeOpacity={0.7}
                 >
                   {isBoardMode ? (
-                    <View
-                      style={[
-                        styles.autoIcon,
-                        { backgroundColor: "rgba(63,169,245,0.2)" },
-                      ]}
-                    >
+                    <View style={[styles.autoIcon, { backgroundColor: "rgba(63,169,245,0.2)" }]}>
                       <Text style={[styles.autoIconText, { color: colors.saber }]}>◈</Text>
                     </View>
                   ) : selectedCharId === "auto" ? (
-                    <View
-                      style={[
-                        styles.autoIcon,
-                        { backgroundColor: colors.saber },
-                      ]}
-                    >
+                    <View style={[styles.autoIcon, { backgroundColor: colors.saber }]}>
                       <Text style={[styles.autoIconText, { color: "#04111f" }]}>✦</Text>
                     </View>
                   ) : (
@@ -738,9 +710,7 @@ export default function ChatScreen() {
                         ? "Auto"
                         : CHARACTERS[selectedCharId]?.name ?? ""}
                   </Text>
-                  <Text style={[styles.charPickerChevron, { color: colors.faint }]}>
-                    ▾
-                  </Text>
+                  <Text style={[styles.charPickerChevron, { color: colors.faint }]}>▾</Text>
                 </TouchableOpacity>
               </View>
 
@@ -748,28 +718,14 @@ export default function ChatScreen() {
                 <TouchableOpacity
                   style={[
                     styles.researchToggle,
-                    {
-                      backgroundColor: colors.background2,
-                      borderColor: deepResearch
-                        ? colors.saber
-                        : colors.line,
-                    },
+                    { backgroundColor: colors.background2, borderColor: deepResearch ? colors.saber : colors.line },
                   ]}
                   onPress={() => setDeepResearch((v) => !v)}
                   activeOpacity={0.7}
                 >
-                  <Feather
-                    name="search"
-                    size={13}
-                    color={deepResearch ? colors.saber : colors.dim}
-                  />
-                  <Text
-                    style={[
-                      styles.researchText,
-                      { color: deepResearch ? colors.saber : colors.dim },
-                    ]}
-                  >
-                    deep research
+                  <Feather name="search" size={13} color={deepResearch ? colors.saber : colors.dim} />
+                  <Text style={[styles.researchText, { color: deepResearch ? colors.saber : colors.dim }]}>
+                    deep
                   </Text>
                 </TouchableOpacity>
 
@@ -790,7 +746,7 @@ export default function ChatScreen() {
           </View>
 
           <Text style={[styles.disclaimer, { color: colors.faint }]}>
-            Co-Star is coaching and company, not professional help.
+            Coaching and company — not a substitute for professionals.
           </Text>
         </View>
       </KeyboardAvoidingView>
@@ -802,9 +758,12 @@ export default function ChatScreen() {
         onSelectCharacter={(id) => {
           setSelectedCharId(id);
           setIsBoardMode(false);
+          currentCharIdRef.current = id;
         }}
         onOpenBoard={openBoard}
-        recentChats={recentChats}
+        savedConvs={savedConvs}
+        onLoadConv={loadConv}
+        onDeleteConv={handleDeleteConv}
       />
 
       <CharacterSheet
@@ -816,6 +775,7 @@ export default function ChatScreen() {
         onSelectCharacter={(id) => {
           setSelectedCharId(id);
           setIsBoardMode(false);
+          currentCharIdRef.current = id;
         }}
         onSelectBoard={openBoard}
         onSelectTemplate={handleSelectTemplate}
@@ -830,10 +790,7 @@ function makeStyles(
   bottomPad: number
 ) {
   return StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: colors.background,
-    },
+    container: { flex: 1, backgroundColor: colors.background },
     flex: { flex: 1 },
     topBar: {
       flexDirection: "row",
@@ -852,9 +809,10 @@ function makeStyles(
       justifyContent: "center",
     },
     topTitle: {
-      color: colors.dim,
+      color: colors.saber,
       fontSize: 16,
       fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
+      letterSpacing: 0.3,
     },
     emptyContainer: {
       flex: 1,
@@ -865,15 +823,12 @@ function makeStyles(
     },
     greeting: {
       color: colors.foreground,
-      fontSize: 30,
+      fontSize: 34,
       fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
       fontWeight: "400",
-      letterSpacing: -0.5,
-      lineHeight: 38,
+      letterSpacing: -0.8,
+      lineHeight: 42,
       textAlign: "center",
-    },
-    greetingStar: {
-      color: colors.saber,
     },
     greetingSub: {
       color: colors.dim,
@@ -883,14 +838,14 @@ function makeStyles(
       textAlign: "center",
       marginTop: 12,
       lineHeight: 21,
-      maxWidth: 280,
+      maxWidth: 270,
     },
     chips: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: 8,
       justifyContent: "center",
-      marginTop: 26,
+      marginTop: 28,
       maxWidth: 340,
     },
     chip: {
@@ -899,22 +854,12 @@ function makeStyles(
       borderColor: colors.line,
       borderRadius: 20,
       paddingVertical: 9,
-      paddingHorizontal: 13,
+      paddingHorizontal: 14,
     },
-    chipText: {
-      color: colors.foreground,
-      fontSize: 12.5,
-    },
-    chipRoast: {
-      borderColor: "rgba(63,169,245,0.4)",
-    },
-    chipRoastText: {
-      color: colors.saber,
-    },
-    chatContent: {
-      paddingVertical: 12,
-      paddingBottom: 8,
-    },
+    chipText: { color: colors.foreground, fontSize: 12.5 },
+    chipRoast: { borderColor: "rgba(63,169,245,0.4)" },
+    chipRoastText: { color: colors.saber },
+    chatContent: { paddingVertical: 12, paddingBottom: 8 },
     composerWrapper: {
       marginHorizontal: 14,
       marginBottom: Math.max(bottomPad, 8),
@@ -939,19 +884,9 @@ function makeStyles(
       paddingHorizontal: 12,
       borderRadius: 10,
     },
-    plusMenuText: {
-      fontSize: 14,
-    },
-    composer: {
-      borderWidth: 1,
-      borderRadius: 22,
-      padding: 6,
-    },
-    composerRow1: {
-      paddingHorizontal: 12,
-      paddingTop: 10,
-      paddingBottom: 4,
-    },
+    plusMenuText: { fontSize: 14 },
+    composer: { borderWidth: 1, borderRadius: 22, padding: 6 },
+    composerRow1: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 4 },
     composerInput: {
       fontSize: 15,
       lineHeight: 21,
@@ -965,16 +900,8 @@ function makeStyles(
       paddingHorizontal: 4,
       paddingBottom: 2,
     },
-    composerLeft: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-    },
-    composerRight: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-    },
+    composerLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+    composerRight: { flexDirection: "row", alignItems: "center", gap: 6 },
     plusBtn: {
       width: 32,
       height: 32,
@@ -982,11 +909,6 @@ function makeStyles(
       borderWidth: 1,
       alignItems: "center",
       justifyContent: "center",
-    },
-    plusBtnText: {
-      fontSize: 18,
-      lineHeight: 22,
-      fontWeight: "300",
     },
     charPicker: {
       flexDirection: "row",
@@ -1005,26 +927,17 @@ function makeStyles(
       alignItems: "center",
       justifyContent: "center",
     },
-    autoIconText: {
-      fontSize: 10,
-      fontWeight: "700",
-    },
-    charPickerName: {
-      fontSize: 13,
-      fontWeight: "500",
-    },
-    charPickerChevron: {
-      fontSize: 11,
-    },
+    autoIconText: { fontSize: 10, fontWeight: "700" },
+    charPickerName: { fontSize: 13, fontWeight: "500" },
+    charPickerChevron: { fontSize: 11 },
     researchToggle: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 6,
+      gap: 5,
       borderWidth: 1,
       borderRadius: 16,
       paddingVertical: 6,
-      paddingHorizontal: 10,
-      marginRight: 6,
+      paddingHorizontal: 9,
     },
     researchText: {
       fontSize: 9,
@@ -1042,9 +955,7 @@ function makeStyles(
       shadowOpacity: 1,
       elevation: 4,
     },
-    sendBtnDisabled: {
-      opacity: 0.4,
-    },
+    sendBtnDisabled: { opacity: 0.35 },
     disclaimer: {
       fontSize: 8,
       textAlign: "center",

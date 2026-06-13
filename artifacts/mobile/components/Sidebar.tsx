@@ -10,25 +10,16 @@ import {
   Dimensions,
   Modal,
   Platform,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
-import {
-  CHARACTER_IDS,
-  CHARACTERS,
-  BOARD_MEMBER_IDS,
-} from "@/constants/characters";
+import { CHARACTER_IDS, CHARACTERS, BOARD_MEMBER_IDS } from "@/constants/characters";
 import CharacterAvatar from "./CharacterAvatar";
+import type { SavedConv } from "@/lib/storage";
 
 const SIDEBAR_WIDTH = Math.min(Dimensions.get("window").width * 0.84, 320);
-
-export interface RecentChat {
-  id: string;
-  charId: string;
-  preview: string;
-  time: string;
-}
 
 interface SidebarProps {
   visible: boolean;
@@ -36,7 +27,9 @@ interface SidebarProps {
   onNewChat: () => void;
   onSelectCharacter: (charId: string) => void;
   onOpenBoard: () => void;
-  recentChats: RecentChat[];
+  savedConvs: SavedConv[];
+  onLoadConv: (conv: SavedConv) => void;
+  onDeleteConv: (id: string) => void;
 }
 
 export default function Sidebar({
@@ -45,7 +38,9 @@ export default function Sidebar({
   onNewChat,
   onSelectCharacter,
   onOpenBoard,
-  recentChats,
+  savedConvs,
+  onLoadConv,
+  onDeleteConv,
 }: SidebarProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -89,15 +84,24 @@ export default function Sidebar({
 
   if (!shouldRender) return null;
 
+  function confirmDelete(id: string, title: string) {
+    Alert.alert("Delete conversation", `"${title.slice(0, 40)}…"`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => onDeleteConv(id),
+      },
+    ]);
+  }
+
   return (
     <Modal visible={shouldRender} transparent animationType="none" onRequestClose={onClose}>
       <View style={StyleSheet.absoluteFill}>
         <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]} />
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
 
-        <Animated.View
-          style={[styles.sidebar, { transform: [{ translateX }] }]}
-        >
+        <Animated.View style={[styles.sidebar, { transform: [{ translateX }] }]}>
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
@@ -109,18 +113,15 @@ export default function Sidebar({
 
             <TouchableOpacity
               style={styles.boardPin}
-              onPress={() => {
-                onOpenBoard();
-                onClose();
-              }}
+              onPress={() => { onOpenBoard(); onClose(); }}
               activeOpacity={0.7}
             >
               <View style={styles.boardStack}>
                 {BOARD_MEMBER_IDS.slice(0, 3).map((id) => (
                   <CharacterAvatar
                     key={id}
-                    initials={CHARACTERS[id].initials}
-                    color={CHARACTERS[id].color}
+                    initials={CHARACTERS[id]!.initials}
+                    color={CHARACTERS[id]!.color}
                     size={28}
                   />
                 ))}
@@ -131,75 +132,83 @@ export default function Sidebar({
                   <View style={styles.boardDot} />
                 </View>
                 <Text style={styles.boardSubtitle} numberOfLines={1}>
-                  3 founders + a VC, in the room
+                  Paul, Marc & Sam in the room
                 </Text>
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.newChatBtn}
-              onPress={() => {
-                onNewChat();
-                onClose();
-              }}
+              onPress={() => { onNewChat(); onClose(); }}
               activeOpacity={0.7}
             >
               <Feather name="plus" size={17} color={colors.foreground} />
               <Text style={styles.newChatText}>New conversation</Text>
             </TouchableOpacity>
 
-            {recentChats.length > 0 && (
+            {savedConvs.length > 0 && (
               <>
-                <Text style={styles.sectionLabel}>Recent</Text>
-                {recentChats.map((chat) => (
-                  <TouchableOpacity
-                    key={chat.id}
-                    style={styles.convItem}
-                    onPress={() => {
-                      onSelectCharacter(chat.charId);
-                      onClose();
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <CharacterAvatar
-                      initials={CHARACTERS[chat.charId]?.initials ?? "??"}
-                      color={CHARACTERS[chat.charId]?.color ?? "#555"}
-                      size={24}
-                    />
-                    <Text style={styles.convPreview} numberOfLines={1}>
-                      {chat.preview}
-                    </Text>
-                    <Text style={styles.convTime}>{chat.time}</Text>
-                  </TouchableOpacity>
-                ))}
+                <Text style={styles.sectionLabel}>History</Text>
+                {savedConvs.map((conv) => {
+                  const char = CHARACTERS[conv.charId];
+                  return (
+                    <TouchableOpacity
+                      key={conv.id}
+                      style={styles.convItem}
+                      onPress={() => { onLoadConv(conv); onClose(); }}
+                      onLongPress={() => confirmDelete(conv.id, conv.title)}
+                      activeOpacity={0.7}
+                    >
+                      {conv.boardMode ? (
+                        <View style={styles.boardMiniStack}>
+                          {BOARD_MEMBER_IDS.slice(0, 2).map((id) => (
+                            <CharacterAvatar
+                              key={id}
+                              initials={CHARACTERS[id]!.initials}
+                              color={CHARACTERS[id]!.color}
+                              size={20}
+                            />
+                          ))}
+                        </View>
+                      ) : (
+                        <CharacterAvatar
+                          initials={char?.initials ?? "??"}
+                          color={char?.color ?? "#555"}
+                          size={24}
+                        />
+                      )}
+                      <Text style={styles.convPreview} numberOfLines={1}>
+                        {conv.title}
+                      </Text>
+                      <Text style={styles.convTime}>{relativeTime(conv.ts)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </>
             )}
 
-            <Text style={styles.sectionLabel}>Characters</Text>
+            <Text style={styles.sectionLabel}>Advisors</Text>
             {CHARACTER_IDS.map((id) => {
-              const char = CHARACTERS[id];
+              const char = CHARACTERS[id]!;
               return (
                 <TouchableOpacity
                   key={id}
                   style={styles.charItem}
-                  onPress={() => {
-                    onSelectCharacter(id);
-                    onClose();
-                  }}
+                  onPress={() => { onSelectCharacter(id); onClose(); }}
                   activeOpacity={0.7}
                 >
-                  <CharacterAvatar
-                    initials={char.initials}
-                    color={char.color}
-                    size={24}
-                  />
-                  <Text style={styles.charName}>{char.name}</Text>
-                  <Text style={styles.charRole} numberOfLines={1}>
-                    {char.role}
-                  </Text>
+                  <CharacterAvatar initials={char.initials} color={char.color} size={24} />
+                  <View style={styles.charBody}>
+                    <Text style={styles.charName}>{char.name}</Text>
+                    <Text style={styles.charVoice} numberOfLines={1}>{char.voice}</Text>
+                  </View>
                 </TouchableOpacity>
               );
             })}
+
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>Co-Star for Founders</Text>
+            </View>
           </ScrollView>
         </Animated.View>
       </View>
@@ -207,12 +216,24 @@ export default function Sidebar({
   );
 }
 
-function makeStyles(colors: ReturnType<typeof import("@/hooks/useColors").useColors>, insets: { top: number; bottom: number }) {
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60000) return "now";
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+  if (diff < 86400000 * 7) return `${Math.floor(diff / 86400000)}d`;
+  return new Date(ts).toLocaleDateString("en", { month: "short", day: "numeric" });
+}
+
+function makeStyles(
+  colors: ReturnType<typeof import("@/hooks/useColors").useColors>,
+  insets: { top: number; bottom: number }
+) {
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   return StyleSheet.create({
     backdrop: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: "rgba(5,8,13,0.65)",
+      backgroundColor: "rgba(5,8,13,0.72)",
     },
     sidebar: {
       position: "absolute",
@@ -237,10 +258,7 @@ function makeStyles(colors: ReturnType<typeof import("@/hooks/useColors").useCol
       paddingHorizontal: 4,
       marginBottom: 4,
     },
-    brandStar: {
-      color: colors.saber,
-      fontSize: 18,
-    },
+    brandStar: { color: colors.saber, fontSize: 18 },
     brandName: {
       color: colors.foreground,
       fontSize: 20,
@@ -258,16 +276,9 @@ function makeStyles(colors: ReturnType<typeof import("@/hooks/useColors").useCol
       padding: 12,
       marginBottom: 10,
     },
-    boardStack: {
-      flexDirection: "row",
-      gap: -6,
-    },
+    boardStack: { flexDirection: "row", marginRight: -4 },
     boardInfo: { flex: 1, minWidth: 0 },
-    boardTitleRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 7,
-    },
+    boardTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
     boardTitle: {
       color: colors.foreground,
       fontSize: 15,
@@ -279,11 +290,7 @@ function makeStyles(colors: ReturnType<typeof import("@/hooks/useColors").useCol
       borderRadius: 3.5,
       backgroundColor: colors.saber,
     },
-    boardSubtitle: {
-      color: colors.dim,
-      fontSize: 11,
-      marginTop: 2,
-    },
+    boardSubtitle: { color: colors.dim, fontSize: 11, marginTop: 2 },
     newChatBtn: {
       flexDirection: "row",
       alignItems: "center",
@@ -295,11 +302,7 @@ function makeStyles(colors: ReturnType<typeof import("@/hooks/useColors").useCol
       borderRadius: 12,
       marginBottom: 6,
     },
-    newChatText: {
-      color: colors.foreground,
-      fontSize: 14,
-      fontWeight: "500",
-    },
+    newChatText: { color: colors.foreground, fontSize: 14, fontWeight: "500" },
     sectionLabel: {
       color: colors.faint,
       fontSize: 9.5,
@@ -318,11 +321,8 @@ function makeStyles(colors: ReturnType<typeof import("@/hooks/useColors").useCol
       paddingHorizontal: 8,
       borderRadius: 10,
     },
-    convPreview: {
-      flex: 1,
-      color: colors.dim,
-      fontSize: 13.5,
-    },
+    boardMiniStack: { flexDirection: "row", width: 24 },
+    convPreview: { flex: 1, color: colors.dim, fontSize: 13 },
     convTime: {
       color: colors.faint,
       fontSize: 9,
@@ -336,16 +336,25 @@ function makeStyles(colors: ReturnType<typeof import("@/hooks/useColors").useCol
       paddingHorizontal: 8,
       borderRadius: 10,
     },
-    charName: {
-      color: colors.dim,
-      fontSize: 13.5,
-      flex: 1,
+    charBody: { flex: 1, minWidth: 0, gap: 1 },
+    charName: { color: colors.dim, fontSize: 13.5 },
+    charVoice: {
+      color: colors.faint,
+      fontSize: 10,
+      lineHeight: 14,
     },
-    charRole: {
+    footer: {
+      marginTop: 28,
+      paddingTop: 16,
+      borderTopWidth: 1,
+      borderTopColor: colors.line,
+      alignItems: "center",
+    },
+    footerText: {
       color: colors.faint,
       fontSize: 10,
       fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
-      maxWidth: 100,
+      letterSpacing: 0.5,
     },
   });
 }

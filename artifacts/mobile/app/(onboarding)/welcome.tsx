@@ -12,6 +12,7 @@ import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "@/hooks/useColors";
 
 const { width, height } = Dimensions.get("window");
@@ -141,6 +142,18 @@ export default function WelcomeScreen() {
             <Text style={styles.ctaText}>Meet your advisors</Text>
           </Pressable>
 
+          <Pressable
+            onPress={async () => {
+              await AsyncStorage.setItem("costar_onboarded", "true").catch(() => {});
+              router.replace("/(tabs)/");
+            }}
+            hitSlop={12}
+          >
+            <Text style={[styles.skipText, { color: colors.faint }]}>
+              Skip onboarding →
+            </Text>
+          </Pressable>
+
           <Text style={[styles.legal, { color: colors.faint }]}>
             Not a substitute for actual advice. Just better than spiraling alone.
           </Text>
@@ -213,7 +226,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.3,
   },
-  bottom: { gap: 16, alignItems: "center" },
+  bottom: { gap: 14, alignItems: "center" },
+  skipText: {
+    fontSize: 12,
+    letterSpacing: 0.3,
+    fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
+  },
   ctaButton: {
     width: "100%",
     paddingVertical: 17,
