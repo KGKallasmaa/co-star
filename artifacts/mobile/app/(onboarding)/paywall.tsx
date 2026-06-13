@@ -86,7 +86,7 @@ export default function PaywallScreen() {
 
   async function finishOnboarding() {
     await AsyncStorage.setItem("costar_onboarded", "true").catch(() => {});
-    router.replace("/(tabs)/");
+    router.replace("/(tabs)" as never);
   }
 
   return (

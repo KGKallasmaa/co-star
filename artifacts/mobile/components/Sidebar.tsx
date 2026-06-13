@@ -17,7 +17,7 @@ import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { CHARACTER_IDS, CHARACTERS, BOARD_MEMBER_IDS } from "@/constants/characters";
 import CharacterAvatar from "./CharacterAvatar";
-import type { SavedConv } from "@/lib/storage";
+import type { SavedConv, SavedTake } from "@/lib/storage";
 
 const SIDEBAR_WIDTH = Math.min(Dimensions.get("window").width * 0.84, 320);
 
@@ -28,6 +28,7 @@ interface SidebarProps {
   onSelectCharacter: (charId: string) => void;
   onOpenBoard: () => void;
   savedConvs: SavedConv[];
+  savedTakes: SavedTake[];
   onLoadConv: (conv: SavedConv) => void;
   onDeleteConv: (id: string) => void;
 }
@@ -39,6 +40,7 @@ export default function Sidebar({
   onSelectCharacter,
   onOpenBoard,
   savedConvs,
+  savedTakes,
   onLoadConv,
   onDeleteConv,
 }: SidebarProps) {
@@ -182,6 +184,25 @@ export default function Sidebar({
                       </Text>
                       <Text style={styles.convTime}>{relativeTime(conv.ts)}</Text>
                     </TouchableOpacity>
+                  );
+                })}
+              </>
+            )}
+
+            {savedTakes.length > 0 && (
+              <>
+                <Text style={styles.sectionLabel}>Saved takes</Text>
+                {savedTakes.slice(0, 6).map((take) => {
+                  const char = CHARACTERS[take.charId];
+                  return (
+                    <View key={take.id} style={[styles.takeItem, { borderLeftColor: char?.color ?? colors.line }]}>
+                      <Text style={[styles.takeText, { color: colors.dim }]} numberOfLines={2}>
+                        {take.text.slice(0, 100)}
+                      </Text>
+                      <Text style={[styles.takeName, { color: char?.color ?? colors.faint }]}>
+                        — {char?.name ?? "?"}
+                      </Text>
+                    </View>
                   );
                 })}
               </>
@@ -337,6 +358,24 @@ function makeStyles(
       borderRadius: 10,
     },
     charBody: { flex: 1, minWidth: 0, gap: 1 },
+    takeItem: {
+      borderLeftWidth: 2,
+      paddingLeft: 10,
+      paddingVertical: 8,
+      marginVertical: 3,
+      gap: 4,
+    },
+    takeText: {
+      fontSize: 12.5,
+      lineHeight: 18,
+      fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
+      fontStyle: "italic",
+    },
+    takeName: {
+      fontSize: 10,
+      fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace",
+      letterSpacing: 0.3,
+    },
     charName: { color: colors.dim, fontSize: 13.5 },
     charVoice: {
       color: colors.faint,

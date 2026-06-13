@@ -24,6 +24,15 @@ const ADVISOR_DESCS: Record<string, string> = {
   elon: "Delete the requirement. The deadline is now.",
 };
 
+const ADVISOR_QUOTES: Record<string, string> = {
+  paul: '"What would you do if you knew the answer — but were afraid of it?"',
+  garry: '"The best way out of your head is to call a user. Right now."',
+  marc: '"You\'re not too early. You\'re probably too small in your ambition."',
+  sam: '"i don\'t have advice. i just know this part is genuinely hard."',
+  vc: '"What they said and what they meant are different things. Let me translate."',
+  elon: '"First principles. What\'s actually true here?"',
+};
+
 export default function PickAdvisorScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -103,6 +112,11 @@ export default function PickAdvisorScreen() {
                   <Text style={[styles.charDesc, { color: colors.dim }]}>
                     {ADVISOR_DESCS[id]}
                   </Text>
+                  {isSelected && (
+                    <Text style={[styles.advisorQuote, { color: char.color }]}>
+                      {ADVISOR_QUOTES[id]}
+                    </Text>
+                  )}
                 </View>
                 {isSelected && (
                   <Text style={[styles.check, { color: char.color }]}>✓</Text>
@@ -186,6 +200,13 @@ const styles = StyleSheet.create({
   charName: { fontSize: 15, fontWeight: "600" },
   charRole: { fontSize: 11, fontFamily: Platform.OS === "ios" ? "Courier New" : "monospace" },
   charDesc: { fontSize: 13, lineHeight: 18 },
+  advisorQuote: {
+    fontSize: 12.5,
+    fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
+    fontStyle: "italic",
+    lineHeight: 18,
+    marginTop: 6,
+  },
   check: { fontSize: 18, fontWeight: "700" },
   footer: { paddingTop: 12 },
   ctaButton: {

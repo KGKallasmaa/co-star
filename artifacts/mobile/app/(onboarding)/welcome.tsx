@@ -145,7 +145,7 @@ export default function WelcomeScreen() {
           <Pressable
             onPress={async () => {
               await AsyncStorage.setItem("costar_onboarded", "true").catch(() => {});
-              router.replace("/(tabs)/");
+              router.replace("/(tabs)" as never);
             }}
             hitSlop={12}
           >
