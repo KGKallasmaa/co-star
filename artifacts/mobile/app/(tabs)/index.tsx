@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { Feather } from "@expo/vector-icons";
@@ -27,13 +28,13 @@ import { useColors } from "@/hooks/useColors";
 import {
   CHARACTERS,
   BOARD_MEMBER_IDS,
-  RESPONSES,
   ROAST_LINES,
   BOARD_INTRO,
   routeCharacter,
   QUICK_PROMPTS,
   TEMPLATES,
 } from "@/constants/characters";
+import { streamChat, type ChatMessage } from "@/lib/api";
 import CharacterAvatar from "@/components/CharacterAvatar";
 import Sidebar, { type RecentChat } from "@/components/Sidebar";
 import CharacterSheet from "@/components/CharacterSheet";
@@ -48,8 +49,10 @@ interface Message {
   timestamp: number;
 }
 
+let _msgCounter = 0;
 function uid() {
-  return Date.now().toString() + Math.random().toString(36).slice(2, 9);
+  _msgCounter++;
+  return `msg-${Date.now()}-${_msgCounter}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function relativeTime(ts: number): string {
@@ -58,11 +61,6 @@ function relativeTime(ts: number): string {
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
   return `${Math.floor(diff / 86400000)}d`;
-}
-
-function getResponse(charId: string, idx: number): string {
-  const pool = RESPONSES[charId] ?? RESPONSES["paul"]!;
-  return pool[idx % pool.length]!;
 }
 
 function TypingBubble({ charId }: { charId: string }) {
@@ -274,19 +272,22 @@ export default function ChatScreen() {
   const [sheetTab, setSheetTab] = useState<"characters" | "templates">("characters");
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
-  const responseCountRef = useRef(0);
+  const conversationRef = useRef<ChatMessage[]>([]);
+  const initializedRef = useRef(false);
 
   const started = messages.length > 0;
-
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
 
   useEffect(() => {
-    AsyncStorage.getItem("costar_recent_chats")
-      .then((raw) => {
-        if (raw) setRecentChats(JSON.parse(raw) as RecentChat[]);
-      })
-      .catch(() => {});
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      AsyncStorage.getItem("costar_recent_chats")
+        .then((raw) => {
+          if (raw) setRecentChats(JSON.parse(raw) as RecentChat[]);
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const saveRecentChat = useCallback(
@@ -299,9 +300,7 @@ export default function ChatScreen() {
       };
       const updated = [chat, ...recentChats.slice(0, 4)];
       setRecentChats(updated);
-      AsyncStorage.setItem("costar_recent_chats", JSON.stringify(updated)).catch(
-        () => {}
-      );
+      AsyncStorage.setItem("costar_recent_chats", JSON.stringify(updated)).catch(() => {});
     },
     [recentChats]
   );
@@ -320,54 +319,94 @@ export default function ChatScreen() {
     setTypingCharId(null);
     setIsProcessing(false);
     setPlusMenuOpen(false);
+    conversationRef.current = [];
   }, []);
 
-  const runAIResponse = useCallback(
-    (charId: string, delayMs: number, responseIdx: number) => {
-      return new Promise<void>((resolve) => {
-        setTimeout(() => {
-          setTypingCharId(charId);
-          const typeDuration = deepResearch ? 1800 : 900;
-          setTimeout(() => {
+  const streamSingleResponse = useCallback(
+    async (charId: string, userText: string, history: ChatMessage[]) => {
+      setTypingCharId(charId);
+
+      if (deepResearch) {
+        await new Promise<void>((r) => setTimeout(r, 600));
+      }
+
+      const msgId = uid();
+      let fullContent = "";
+      let assistantAdded = false;
+
+      await streamChat(
+        charId,
+        history,
+        deepResearch,
+        (chunk) => {
+          fullContent += chunk;
+          if (!assistantAdded) {
             setTypingCharId(null);
-            const text = getResponse(charId, responseIdx);
-            addMessage({ type: "ai", charId, text });
-            resolve();
-          }, typeDuration);
-        }, delayMs);
-      });
+            setMessages((prev) => [
+              { id: msgId, type: "ai", charId, text: fullContent, timestamp: Date.now() },
+              ...prev,
+            ]);
+            assistantAdded = true;
+          } else {
+            setMessages((prev) => {
+              const updated = [...prev];
+              const idx = updated.findIndex((m) => m.id === msgId);
+              if (idx !== -1) {
+                updated[idx] = { ...updated[idx]!, text: fullContent };
+              }
+              return updated;
+            });
+          }
+        },
+        () => {
+          setTypingCharId(null);
+          if (!assistantAdded) {
+            setMessages((prev) => [
+              { id: msgId, type: "ai", charId, text: "…", timestamp: Date.now() },
+              ...prev,
+            ]);
+          }
+          conversationRef.current = [
+            ...history,
+            { role: "assistant", content: fullContent },
+          ];
+        },
+        (errMsg) => {
+          setTypingCharId(null);
+          setMessages((prev) => [
+            { id: msgId, type: "ai", charId, text: errMsg, timestamp: Date.now() },
+            ...prev,
+          ]);
+        }
+      );
     },
-    [deepResearch, addMessage]
+    [deepResearch]
   );
 
   const runBoardResponse = useCallback(
-    async (userText: string) => {
-      const idx = responseCountRef.current++;
-      await runAIResponse("paul", 0, idx);
-      await runAIResponse("sam", 400, idx);
-      await runAIResponse("marc", 400, idx + 1);
-      setIsProcessing(false);
-    },
-    [runAIResponse]
-  );
-
-  const runSingleResponse = useCallback(
-    async (charId: string) => {
-      const idx = responseCountRef.current++;
-      if (deepResearch) {
-        addMessage({
-          type: "routing",
-          text: `✦ Deep research — pulling context & recent data…`,
-        });
-        await new Promise<void>((r) => setTimeout(r, 600));
+    async (userText: string, history: ChatMessage[]) => {
+      const boardMembers = ["paul", "sam", "marc"] as const;
+      for (const charId of boardMembers) {
+        await streamSingleResponse(charId, userText, history);
+        await new Promise<void>((r) => setTimeout(r, 200));
       }
-      await runAIResponse(charId, 0, idx);
       setIsProcessing(false);
     },
-    [runAIResponse, deepResearch, addMessage]
+    [streamSingleResponse]
   );
 
-  const runRoastSequence = useCallback(async () => {
+  const runSingleAIResponse = useCallback(
+    async (charId: string, userText: string, history: ChatMessage[]) => {
+      if (deepResearch) {
+        addMessage({ type: "routing", text: `✦ Deep research — pulling context & recent data…` });
+      }
+      await streamSingleResponse(charId, userText, history);
+      setIsProcessing(false);
+    },
+    [streamSingleResponse, deepResearch, addMessage]
+  );
+
+  const runRoastSequence = useCallback(async (history: ChatMessage[]) => {
     setTypingCharId("vc");
     await new Promise<void>((r) => setTimeout(r, deepResearch ? 2000 : 1000));
     setTypingCharId(null);
@@ -392,9 +431,14 @@ export default function ChatScreen() {
       addMessage({ type: "user", text: msg });
       setIsProcessing(true);
 
+      const history: ChatMessage[] = [
+        ...conversationRef.current,
+        { role: "user", content: msg },
+      ];
+
       let responder = selectedCharId;
       if (isBoardMode) {
-        runBoardResponse(msg);
+        runBoardResponse(msg, history);
         return;
       }
       if (selectedCharId === "auto") {
@@ -404,7 +448,7 @@ export default function ChatScreen() {
           text: `✦ Auto brought in ${CHARACTERS[responder]?.name ?? responder}`,
         });
       }
-      runSingleResponse(responder);
+      runSingleAIResponse(responder, msg, history);
       saveRecentChat(responder, msg.slice(0, 50));
     },
     [
@@ -414,7 +458,7 @@ export default function ChatScreen() {
       isBoardMode,
       addMessage,
       runBoardResponse,
-      runSingleResponse,
+      runSingleAIResponse,
       saveRecentChat,
     ]
   );
@@ -424,13 +468,13 @@ export default function ChatScreen() {
     setSelectedCharId("auto");
     setMessages([]);
     setIsProcessing(true);
+    conversationRef.current = [];
 
-    const delay = 0;
     BOARD_INTRO.forEach((item, i) => {
       setTimeout(() => {
         addMessage({ type: "ai", charId: item.charId, text: item.text });
         if (i === BOARD_INTRO.length - 1) setIsProcessing(false);
-      }, delay + i * 900);
+      }, i * 900);
     });
   }, [addMessage]);
 
@@ -451,12 +495,10 @@ export default function ChatScreen() {
         addMessage({ type: "user", text: tpl.prompt });
         setIsProcessing(true);
         if (deepResearch) {
-          addMessage({
-            type: "routing",
-            text: "✦ Deep research — reading their last 200 tweets & portfolio…",
-          });
+          addMessage({ type: "routing", text: "✦ Deep research — reading their last 200 tweets & portfolio…" });
         }
-        runRoastSequence();
+        const history: ChatMessage[] = [{ role: "user", content: tpl.prompt }];
+        runRoastSequence(history);
         return;
       }
 
