@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "FbCzBw3At7gZdgIRxLEE4"
+uri = "file://artifacts/mobile/assets/images/icon.png"
+type = "image"
+title = "costar founders app icon"
